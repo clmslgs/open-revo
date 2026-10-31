@@ -105,6 +105,16 @@ pub trait MechrevoHardwareHAL: Send + Sync {
 /// Universal Hardware Driver Provider Trait.
 /// Represents a hardware communication backend for a specific laptop platform/ODM (Tongfang, Bitland, etc.).
 pub trait HardwareDriver: MechrevoHardwareHAL + Send + Sync {
+    fn set_manual_fan_rpm(&self, _targets: [u16; 2]) -> Result<(), HalError> {
+        Err(HalError::UnsupportedModel("Manual fan RPM not supported".into()))
+    }
+    fn set_software_fan_curve(&self, _curve: Vec<(u8, u8)>) -> Result<(), HalError> {
+        Err(HalError::UnsupportedModel("Software fan curve not supported".into()))
+    }
+    fn restore_fan_auto(&self) -> Result<(), HalError> {
+        Err(HalError::UnsupportedModel("Fan auto restore not supported".into()))
+    }
+
     /// Human-readable driver provider name (e.g. "Tongfang-ACPI", "Bitland-WMI")
     fn name(&self) -> &'static str;
 
@@ -119,6 +129,11 @@ pub trait HardwareDriver: MechrevoHardwareHAL + Send + Sync {
 
     /// Read CPU package temperature in Celsius
     fn read_cpu_temp(&self) -> Result<u8, HalError>;
+
+    /// Read a physical CPU sensor without cached or synthetic fallback values.
+    fn read_cpu_temp_sensor(&self) -> Result<u8, HalError> {
+        Err(HalError::UnsupportedModel("CPU temperature sensor not implemented on this driver".into()))
+    }
 
     /// Read active GPU MUX switch mode ("hybrid" / "dgpu" / "igpu")
     fn get_gpu_mux(&self) -> Result<String, HalError> {

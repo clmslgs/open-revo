@@ -7,6 +7,7 @@ import { GpuModeView } from './GpuModeView';
 import { PowerTuningView } from './PowerTuningView';
 import { SponsorView } from './SponsorView';
 import { CustomTuningPanel } from './CustomTuningPanel';
+import { PtlFanControlPanel } from './tuning/PtlFanControlPanel';
 import { WaterCoolerView, CoolerTelemetry } from './WaterCoolerView';
 import { SystemSettingsView, OsdConfig } from './SystemSettingsView';
 import { PluginsView, CustomPluginItem } from './PluginsView';
@@ -670,7 +671,7 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
 
         {activeTab === 'tuning' && (
           <ModuleErrorBoundary moduleName="电源管理" onNavigateToOverview={() => setActiveTab('overview')}>
-            <PowerTuningView />
+            <PowerTuningView batteryChargeLimitSupported={capabilities?.battery_charge_limit} />
           </ModuleErrorBoundary>
         )}
 
@@ -748,7 +749,14 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
       </div>
 
       {/* Global Custom Tuning Modal Overlay */}
-      {isCustomTuningOpen && (
+      {isCustomTuningOpen && capabilities?.fan_control_mode === 'pmc_pwm' ? (
+        <div className="sys-modal-backdrop" onClick={() => setIsCustomTuningOpen(false)}>
+          <div className="sys-modal-card ptl-fan-modal" role="dialog" aria-modal="true" aria-label="手动转速与风扇曲线" onClick={e => e.stopPropagation()}>
+            <div className="sys-modal-header"><h3>手动转速与风扇曲线</h3><button className="toggle-btn" onClick={() => setIsCustomTuningOpen(false)}>关闭</button></div>
+            <div className="sys-modal-body"><PtlFanControlPanel fan0={status.cpu_fan_rpm} fan1={status.gpu_fan_rpm} /></div>
+          </div>
+        </div>
+      ) : isCustomTuningOpen && (
         <CustomTuningPanel
           status={status}
           capabilities={capabilities}

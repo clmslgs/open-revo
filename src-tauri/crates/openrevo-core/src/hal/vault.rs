@@ -8,6 +8,32 @@
 
 include!(concat!(env!("OUT_DIR"), "/generated_vault.rs"));
 
+/// P916F-PTL PM2 protocol. Never use these commands on STX/LNL or ACPI's primary EC port.
+pub mod ptl {
+    pub const DATA: u16 = 0x68;
+    pub const STATUS_COMMAND: u16 = 0x6c;
+    pub const IBF: u8 = 2;
+    pub const OBF: u8 = 1;
+    pub const READ_PORT: u32 = 0x9c402004;
+    pub const WRITE_PORT: u32 = 0x9c402008;
+    pub const FAN_QUERY: u8 = 0xd5;
+    pub const FAN_AUTO: u8 = 0x10;
+    pub const FAN_PWM: u8 = 0xd6;
+    pub const FAN_RPM: [u8; 2] = [0xd7, 0xd8];
+    pub const FAN_LOW: [u8; 2] = [0x18, 0x16];
+    pub const FAN_HIGH: [u8; 2] = [0x19, 0x17];
+    pub const MODE_QUERY: [u8; 2] = [0xe7, 0x11];
+    pub const BATTERY: u8 = 0xf1;
+    pub const BATTERY_DISABLE: u8 = 0x10;
+    pub const BATTERY_ENABLE: u8 = 0x11;
+    pub const BATTERY_ENABLED: u8 = 0x12;
+    pub const BATTERY_LOWER: u8 = 0x13;
+    pub const BATTERY_UPPER: u8 = 0x14;
+    pub const BATTERY_SET_LOWER: u8 = 0xf2;
+    pub const BATTERY_SET_UPPER: u8 = 0xf3;
+    pub const INPOUT_SHA256: &str = "f8965fdce668692c3785afa3559159f9a18287bc0d53abb21902895a8ecf221b";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

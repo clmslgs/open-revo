@@ -294,6 +294,11 @@ pub fn spawn_hardware_state_restore(ec_for_restore: crate::driver::ec_bridge::Sh
             if let Some(bm) = batt_mode {
                 let _ = hal.set_battery_health(bm);
             }
+            if crate::hal::declarative::load_matched_manifest().is_some_and(|m| m.uses_ptl_pmc()) && cfg.custom_profile.fan_curve_enabled {
+                if let Err(e) = hal.set_software_fan_curve(cfg.custom_profile.cpu_fan_curve.iter().map(|p| (p.temp, p.duty)).collect()) {
+                    crate::log_error!("PTL_FAN", "Cannot restore fan curve: {}", e);
+                }
+            }
 
             crate::system::boot_trace::boot_log("RESTORE", "Thin & light startup hardware restoration completed");
             return;

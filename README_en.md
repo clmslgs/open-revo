@@ -120,6 +120,10 @@ Download the standalone executable from the [Releases Page](https://github.com/f
 
 ---
 
+Intel CPU temperature uses the **CPU Package digital thermal sensor**. Install the [official signed PawnIO driver](https://pawnio.eu) and run OpenRevo as administrator. Supported models can also supply CPU temperatures through their OEM interface. Missing sensor readings appear as `--`; ACPI thermal zones and fixed values are not substituted for CPU temperature. AIDA64 is not required.
+
+Xingyao 14 **P916F-PTL / BIOS 1.00** has been tested with 60%/80%/100% charge limits, independent fan RPM targets and a shared PWM curve. Open the fan controls from Overview; curves require OpenRevo to remain running. The private interface requires an existing, hash-verified `inpoutx64` driver and never installs it automatically. See the [adaptation notes](docs/xingyao-p916f-ptl.md) for protocol evidence, dependencies and limits.
+
 ### 💻 Option 2: Build from Source
 
 #### Prerequisites

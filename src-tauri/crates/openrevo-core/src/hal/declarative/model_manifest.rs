@@ -96,6 +96,13 @@ pub struct ModelCapabilities {
     pub rgb_keyboard: Option<KeyboardCapability>,
 }
 
+impl ModelCapabilities {
+    pub fn uses_bld_fan_controller(&self) -> bool {
+        self.fan_control_mode.as_deref() == Some("direct_rpm_clamp")
+            || self.fan_boost_mode.as_deref() == Some("direct_rpm_clamp")
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -127,6 +134,8 @@ fn default_keyboard_type() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ChannelDef {
+    #[serde(rename = "pmc_ec")]
+    PmcEc { protocol: String },
     #[serde(rename = "wmi_mailbox")]
     WmiMailbox {
         namespace: String,
@@ -134,6 +143,8 @@ pub enum ChannelDef {
         method_name: String,
         #[serde(default = "default_mailbox_sizes")]
         buffer_sizes: MailboxSizes,
+        #[serde(default)]
+        response_status: Option<ResponseStatus>,
     },
     #[serde(rename = "acpi_ioctl")]
     AcpiIoctl {
@@ -151,6 +162,22 @@ pub struct MailboxSizes {
     pub in_size: usize,
     #[serde(rename = "out")]
     pub out_size: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ResponseStatus {
+    pub offset: usize,
+    pub success: u8,
+}
+
+impl ResponseStatus {
+    pub fn validate(&self, response: &[u8]) -> Result<(), String> {
+        match response.get(self.offset) {
+            Some(value) if *value == self.success => Ok(()),
+            Some(value) => Err(format!("Firmware rejected command (status {})", value)),
+            None => Err("Firmware response is missing its status byte".into()),
+        }
+    }
 }
 
 fn default_mailbox_sizes() -> MailboxSizes {
@@ -173,6 +200,13 @@ pub struct ExtractRule {
 pub enum ActionDef {
     /// Map of sub-actions (e.g. power mode name -> input bytes)
     ModeMap(HashMap<String, Vec<serde_json::Value>>),
+    /// Explicit transport and per-mode acknowledgements (some firmware echoes the EC command).
+    ModeInvoke {
+        channel: String,
+        modes: HashMap<String, Vec<serde_json::Value>>,
+        #[serde(default)]
+        response_status: HashMap<String, ResponseStatus>,
+    },
     /// Buffer-based Mailbox invocation
     BufferInvoke {
         channel: Option<String>,
@@ -184,6 +218,25 @@ pub enum ActionDef {
     },
     /// Raw byte sequence with optional parameter placeholders
     RawBytes(Vec<serde_json::Value>),
+}
+
+pub struct ModeInvocation<'a> {
+    pub input: &'a [serde_json::Value],
+    pub channel: Option<&'a str>,
+    pub response_status: Option<&'a ResponseStatus>,
+}
+
+impl ActionDef {
+    pub fn for_mode(&self, mode: &str) -> Option<ModeInvocation<'_>> {
+        let (input, channel, response_status) = match self {
+            Self::ModeMap(modes) => (modes.get(mode)?.as_slice(), None, None),
+            Self::ModeInvoke { channel, modes, response_status } =>
+                (modes.get(mode)?.as_slice(), Some(channel.as_str()), response_status.get(mode)),
+            Self::BufferInvoke { channel, input, .. } => (input.as_slice(), channel.as_deref(), None),
+            Self::RawBytes(input) => (input.as_slice(), None, None),
+        };
+        Some(ModeInvocation { input, channel, response_status })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +254,18 @@ pub struct RangeLimit {
 }
 
 impl ModelManifest {
+    pub fn uses_ptl_pmc(&self) -> bool {
+        self.identity.dmi_match.board_products == ["XINGYAO Series-P916F-PTL"]
+            && self.channels.values().any(|channel| matches!(channel,
+                ChannelDef::PmcEc { protocol } if protocol == "xingyao_ptl_v1"))
+    }
+
+    pub fn uses_mifs_mailbox(&self) -> bool {
+        self.channels.values().any(|channel| matches!(channel,
+            ChannelDef::WmiMailbox { class_name, method_name, .. }
+                if class_name.eq_ignore_ascii_case("MICommonInterface") && method_name.eq_ignore_ascii_case("MiInterface")))
+    }
+
     pub fn matches_dmi(&self, board_product: &str, product_name: &str) -> bool {
         let match_wildcard = |target: &str, pattern: &str| -> bool {
             let t = target.trim().to_uppercase();
@@ -244,8 +309,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ptl_contract_is_exact_and_uses_its_own_pmc_controller() {
+        let manifest: ModelManifest = serde_json::from_str(include_str!("../../../../../resources/drivers/xingyao_14_p916f_ptl.json")).unwrap();
+        assert!(manifest.matches_dmi("XINGYAO Series-P916F-PTL", "XINGYAO Series"));
+        assert!(!manifest.matches_dmi("XINGYAO Series-P916F-STX", "XINGYAO Series"));
+        assert!(!manifest.matches_dmi("XINGYAO Series-P916F-LNL", "XINGYAO Series"));
+        assert!(manifest.capabilities.battery_charge_limit);
+        assert!(manifest.capabilities.fan_custom_curve);
+        assert!(manifest.uses_ptl_pmc());
+        assert!(!manifest.capabilities.uses_bld_fan_controller());
+        assert!(!manifest.uses_mifs_mailbox());
+        assert_eq!(manifest.capabilities.fan_boost_mode.as_deref(), Some("pmc_rpm"));
+        let bld: ModelManifest = serde_json::from_str(include_str!("../../../../../resources/drivers/jiaolong_16_bld.json")).unwrap();
+        assert!(bld.capabilities.uses_bld_fan_controller());
+        assert!(bld.uses_mifs_mailbox());
+    }
+
+    #[test]
+    fn ptl_fans_use_distinct_queries_and_the_same_response_offset() {
+        let manifest: ModelManifest = serde_json::from_str(include_str!("../../../../../resources/drivers/xingyao_14_p916f_ptl.json")).unwrap();
+        for (action, selector) in [("diagnostic_cpu_fan_rpm", 0), ("diagnostic_gpu_fan_rpm", 1)] {
+            let ActionDef::BufferInvoke { channel, input, parse, .. } = &manifest.actions[action] else { panic!("Expected a mailbox query") };
+            assert_eq!(channel.as_deref(), Some("wmi_mailbox"));
+            assert_eq!(*input, vec![serde_json::json!(2), serde_json::json!(1), serde_json::json!(selector)]);
+            let rule = &parse.as_ref().unwrap()["rpm"];
+            assert_eq!(rule.offset, 1);
+            assert_eq!(rule.value_type, "u16_le");
+        }
+        let ActionDef::BufferInvoke { channel, .. } = &manifest.actions["read_fan_rpm"] else { panic!("Expected PM2 action") };
+        assert_eq!(channel.as_deref(), Some("pm2"));
+    }
+
+    #[test]
+    fn firmware_status_requires_a_present_success_byte() {
+        let status = ResponseStatus { offset: 0, success: 0 };
+        assert!(status.validate(&[0, 42]).is_ok());
+        assert!(status.validate(&[1, 42]).is_err());
+        assert!(status.validate(&[]).is_err());
+    }
+
+    #[test]
+    fn ptl_mode_acknowledgements_are_scoped_to_each_command() {
+        let manifest: ModelManifest = serde_json::from_str(include_str!("../../../../../resources/drivers/xingyao_14_p916f_ptl.json")).unwrap();
+        let action = &manifest.actions["set_power_mode"];
+        assert!(matches!(action, ActionDef::ModeInvoke { .. }));
+        for (mode, selector, acknowledgement) in [("office",1,148), ("balance",2,149), ("turbo",3,150)] {
+            let invocation = action.for_mode(mode).unwrap();
+            assert_eq!(invocation.channel, Some("wmi_mailbox"));
+            assert_eq!(invocation.input, &[serde_json::json!(3),serde_json::json!(10),serde_json::json!(selector)]);
+            let status = invocation.response_status.unwrap();
+            assert!(status.validate(&[acknowledgement]).is_ok());
+            for bad in [0,1,2,255,if acknowledgement == 148 {149} else {148}] {
+                assert!(status.validate(&[bad]).is_err());
+            }
+            assert!(status.validate(&[]).is_err());
+        }
+        assert!(action.for_mode("custom").is_none());
+        let ChannelDef::WmiMailbox { response_status: Some(query_status), .. } = &manifest.channels["wmi_mailbox"] else { panic!("Expected query status") };
+        assert!(query_status.validate(&[0]).is_ok());
+        assert!(query_status.validate(&[148]).is_err());
+    }
+
+    #[test]
+    fn legacy_mode_maps_keep_their_default_transport_status() {
+        let action: ActionDef = serde_json::from_str(r#"{"office":[1,2,3]}"#).unwrap();
+        let invocation = action.for_mode("office").unwrap();
+        assert_eq!(invocation.input, &[serde_json::json!(1),serde_json::json!(2),serde_json::json!(3)]);
+        assert!(invocation.channel.is_none());
+        assert!(invocation.response_status.is_none());
+    }
+
+    #[test]
     fn test_wujie_14_ip3_deserialization() {
-        let json = include_str!("../../../resources/drivers/wujie_14_ip3.json");
+        let json = include_str!("../../../../../resources/drivers/wujie_14_ip3.json");
         let manifest: ModelManifest = serde_json::from_str(json).expect("Failed to parse manifest");
         let action = manifest.actions.get("set_power_mode").expect("No set_power_mode");
         match action {
@@ -260,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_xingyao_14_p916f_deserialization() {
-        let json = include_str!("../../../resources/drivers/xingyao_14_p916f.json");
+        let json = include_str!("../../../../../resources/drivers/xingyao_14_p916f.json");
         let manifest: ModelManifest = serde_json::from_str(json).expect("Failed to parse manifest");
         let action = manifest.actions.get("set_power_mode").expect("No set_power_mode");
         match action {
@@ -276,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_wujie_14_bld_deserialization() {
-        let json = include_str!("../../../resources/drivers/wujie_14_bld.json");
+        let json = include_str!("../../../../../resources/drivers/wujie_14_bld.json");
         let manifest: ModelManifest = serde_json::from_str(json).expect("Failed to parse manifest");
         let action = manifest.actions.get("set_power_mode").expect("No set_power_mode");
         match action {
@@ -292,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_jiaolong_16_bld_matching() {
-        let json = include_str!("../../../resources/drivers/jiaolong_16_bld.json");
+        let json = include_str!("../../../../../resources/drivers/jiaolong_16_bld.json");
         let manifest: ModelManifest = serde_json::from_str(json).expect("Failed to parse manifest");
         // Test real tester's DMI from report:
         // Board: MRID6-23, Product: Jiaolong Series MRID6
@@ -302,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_wujie_x_series_deserialization_and_matching() {
-        let json = include_str!("../../../resources/drivers/wujie_x_series.json");
+        let json = include_str!("../../../../../resources/drivers/wujie_x_series.json");
         let manifest: ModelManifest = serde_json::from_str(json).expect("Failed to parse manifest");
 
         // Verify capabilities: thin & light, no dGPU, fan curve enabled
