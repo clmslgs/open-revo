@@ -2,6 +2,8 @@
 
 // pub mod baolongda_guard;
 pub mod declarative;
+pub use openrevo_core::hal::cpu_temperature;
+pub use openrevo_core::hal::ptl_pmc;
 pub mod driver_impl;
 pub mod mock;
 pub mod platform_probe;

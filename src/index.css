@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+.ptl-fan-panel { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.ptl-fan-panel > .tuning-card { display: flex; flex-direction: column; gap: var(--space-2); }
+.ptl-fan-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ptl-fan-error, .hardware-control-error { color: var(--status-error); font-size: var(--font-size-sm); }
+.ptl-fan-launch { margin-top: var(--space-3); }
+.sys-modal-card.ptl-fan-modal { width: min(620px, 94vw); max-height: 90vh; overflow-y: auto; }
+.ptl-fan-modal .sys-modal-header { display: flex; justify-content: space-between; align-items: center; }
+
 :root {
   color-scheme: dark;
   /* ==========================================================================
@@ -32,6 +40,9 @@
   --text-dim: #64748b;
 
   /* --- 4. Physical Scale & Mesh (圆角与间距规范) --- */
+  --space-2: 8px;
+  --space-3: 12px;
+  --font-size-sm: 12px;
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;

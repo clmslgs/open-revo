@@ -2,6 +2,8 @@
 
 // pub mod baolongda_guard;
 pub mod declarative;
+pub mod cpu_temperature;
+pub mod ptl_pmc;
 pub mod driver_impl;
 pub mod mock;
 pub mod platform_probe;

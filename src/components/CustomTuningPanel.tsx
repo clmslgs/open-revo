@@ -16,6 +16,7 @@ import { TuningToolbar } from './tuning/TuningToolbar';
 import { CpuTuningSection } from './tuning/CpuTuningSection';
 import { GpuTuningSection } from './tuning/GpuTuningSection';
 import { BldFanStrategyPanel } from './tuning/BldFanStrategyPanel';
+import { PtlFanControlPanel } from './tuning/PtlFanControlPanel';
 
 export const DEFAULT_8_POINT_CURVE: FanCurvePoint[] = [
   { temp: 40, duty: 22 },
@@ -1083,7 +1084,9 @@ export const CustomTuningPanel: React.FC<CustomTuningPanelProps> = ({
           />
 
           {/* Column 3: Fan Controls & Curves */}
-          {modelCaps?.fan_custom_curve === false ? (
+          {modelCaps?.fan_control_mode === 'pmc_pwm' ? (
+            <PtlFanControlPanel fan0={status.cpu_fan_rpm} fan1={status.gpu_fan_rpm} />
+          ) : modelCaps?.fan_custom_curve === false ? (
             <BldFanStrategyPanel
               cpuFanRpm={status.cpu_fan_rpm}
               gpuFanRpm={status.gpu_fan_rpm}

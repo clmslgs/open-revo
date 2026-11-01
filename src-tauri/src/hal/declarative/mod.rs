@@ -8,6 +8,7 @@ pub mod wmi_mailbox;
 pub use driver::DeclarativeHardwareDriver;
 pub use model_manifest::ModelManifest;
 
+const BUILTIN_XINGYAO_14_PTL: &str = include_str!("../../../resources/drivers/xingyao_14_p916f_ptl.json");
 const BUILTIN_XINGYAO_14: &str = include_str!("../../../resources/drivers/xingyao_14_p916f.json");
 const BUILTIN_WUJIE_14_IP3: &str = include_str!("../../../resources/drivers/wujie_14_ip3.json");
 const BUILTIN_WUJIE_14_BLD: &str = include_str!("../../../resources/drivers/wujie_14_bld.json");
@@ -91,6 +92,14 @@ fn load_matched_manifest_internal() -> Option<ModelManifest> {
                             }
                         }
                     }
+                }
+            }
+
+            // Exact PTL contract takes priority over the older P916F wildcard.
+            if let Ok(manifest) = serde_json::from_str::<ModelManifest>(BUILTIN_XINGYAO_14_PTL) {
+                if manifest.matches_dmi(&board, &sys_prod) {
+                    crate::log_info!("DECLARATIVE_LOADER", "Matched PTL driver manifest: {} for board '{}'", manifest.id, board);
+                    return Some(manifest);
                 }
             }
 
@@ -186,6 +195,7 @@ pub fn invoke_raw_mailbox(in_bytes: &[u8]) -> Result<Vec<u8>, String> {
                 class_name,
                 method_name,
                 buffer_sizes,
+                ..
             } => Some((namespace, class_name, method_name, buffer_sizes)),
             _ => None,
         })

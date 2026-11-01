@@ -86,6 +86,7 @@ pub fn update_tray_log_state(_enabled: bool) {
 
 /// Graceful hardware shutdown and MCU handover on application exit.
 pub fn safe_hardware_shutdown_on_exit() {
+    crate::hal::ptl_pmc::suspend_or_exit();
     println!("[OpenRevo] Tray quit requested. Safely shutting down water cooler, handing over logo & keyboard to MCU...");
     crate::driver::ble_cooler::get_global_cooler().stop_and_shutdown();
     crate::driver::ite_lighting::IteLightingManager::handover_logo_on_exit();

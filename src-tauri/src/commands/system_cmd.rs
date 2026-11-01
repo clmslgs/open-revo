@@ -69,7 +69,7 @@ pub fn collect_hardware_state(
     query_gpu: bool,
 ) -> HardwareState {
     let is_bld_manifest = crate::hal::declarative::load_matched_manifest()
-        .map(|m| m.channels.values().any(|ch| matches!(ch, crate::hal::declarative::model_manifest::ChannelDef::WmiMailbox { .. })))
+        .map(|m| m.capabilities.uses_bld_fan_controller())
         .unwrap_or(false);
     // 1. Nanosecond EC state copy: Immediately drop lock to prevent cross-thread starvation
     let (power_mode, fan_boost, battery_limit, mut cpu_fan_rpm, mut gpu_fan_rpm, is_mock) = {
@@ -88,16 +88,18 @@ pub fn collect_hardware_state(
         )
     };
 
+    let battery_limit = if crate::driver::wmi_ec::get_hardware_support_flags().has_battery_limit {
+        battery_limit
+    } else {
+        0
+    };
+
     // On-demand foreground fan telemetry for ultrabooks (zero background polling)
     if crate::hal::platform_probe::is_ultrabook() {
         let hal = crate::hal::get_hardware_driver();
         if let Ok((c_rpm, g_rpm)) = hal.read_fan_rpm() {
-            if c_rpm > 0 {
-                cpu_fan_rpm = c_rpm;
-            }
-            if g_rpm > 0 {
-                gpu_fan_rpm = g_rpm;
-            }
+            cpu_fan_rpm = c_rpm;
+            gpu_fan_rpm = g_rpm;
             ec_state.lock().update_fan_rpm(c_rpm, g_rpm);
         }
     }
@@ -1509,7 +1511,8 @@ pub fn get_model_capabilities() -> serde_json::Value {
         // If the ACPI driver is active and returns valid non-zero wattage, prioritize real hardware truth.
         let effective_pmw = {
             let mut watts_map = manifest.capabilities.power_mode_watts.clone().unwrap_or_default();
-            if crate::driver::wmi_ec::is_acpi_driver_available() {
+            if manifest.channels.values().any(|channel| matches!(channel, crate::hal::declarative::model_manifest::ChannelDef::AcpiIoctl { .. }))
+                && crate::driver::wmi_ec::is_acpi_driver_available() {
                 let off_ec = crate::driver::wmi_ec::wmi_read_ec(crate::driver::wmi_ec::ADDR_OFFICE_PL1).unwrap_or(0);
                 let bal_ec = crate::driver::wmi_ec::wmi_read_ec(crate::driver::wmi_ec::ADDR_BALANCE_PL1).unwrap_or(0);
                 let tur_ec = crate::driver::wmi_ec::wmi_read_ec(crate::driver::wmi_ec::ADDR_TURBO_PL1).unwrap_or(0);
