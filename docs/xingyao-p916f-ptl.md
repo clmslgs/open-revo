@@ -54,6 +54,77 @@ These controls instead use the declared `pmc_ec` channel, protocol
 board, manufacturer and BIOS 1.00 independently of the JSON declaration.
 No Tongfang or Baolongda EC register map is used.
 
+## Native CPU custom power (2026-11-02)
+
+Contract 1.4.1 opts into the independent `cpu_power_backend: intel_rapl` and
+exposes Custom alongside Office, Balance and Turbo. Custom is a software mode:
+it selects the existing Turbo firmware preset once, then applies Intel package
+PL1/PL2 through the installed, signed PawnIO IntelMSR module. The firmware still
+reports mode 3; the HAL reports Custom only while the native CPU session owns it.
+No fourth WMI performance command is invented.
+
+The original CPU tuning controls probe the installed module for package power units, PL1/PL2,
+enable flags, time windows and the firmware lock. The probe never writes to test
+writability. An unlocked register is a candidate for writes; only successful
+write/readback confirms a requested setting. Values retain fractional watts on
+readback. PL2 occupies the upper 32-bit half, not bits 16–30. PL4, temperature
+walls, voltage offsets and ratios remain unavailable.
+
+The contract declares `cpu_power_max_watts: 50`, so both PL1 and PL2 have a
+5–50 W adjustment range, with PL1 <= PL2. This ceiling was requested based on
+the user's estimate of roughly 40 W sustained chassis cooling capacity; it is
+a software limit, not a measured firmware or cooling limit. The current preset's
+15/20 W settings do not reduce that adjustment range, and a Turbo preset above
+50 W cannot raise it. Backend validation, the runtime probe, generated defaults
+and the original UI use the same ceiling. Register locks and write/readback
+validation still apply. Existing imported profiles above 50 W are rejected.
+Other contracts without an explicit ceiling retain their firmware-budget policy.
+
+To read current PL1/PL2 from an administrator PowerShell at the repository root:
+
+```powershell
+cargo run --quiet --manifest-path .\src-tauri\Cargo.toml -p openrevo-core --example cpu_power
+```
+
+After the first build, `src-tauri\target\debug\examples\cpu_power.exe` can be run
+directly; add `--json` for machine-readable output. The probe uses the existing
+PawnIO installation, only reads the current registers, and can run alongside
+OpenRevo. It reports register values rather than another process's control state.
+
+One mutex serializes CPU mode changes, profile edits and restoration. Writes
+preserve time windows, clamp, lock and unrelated bits, verify readback, and
+attempt rollback on failure. Selecting an ordinary mode restores only fields
+still matching OpenRevo's last write, before selecting the firmware preset.
+External changes are shown as an override and are not repeatedly overwritten.
+Identical live edits do not rewrite registers. Updates to an active session use
+the guarded update path, which cannot restart a canceled session. In the classic
+UI, editing PL1/PL2 outside Custom applies the changed profile through the explicit
+apply command; saving an inactive profile through the save API alone does not
+enter Custom.
+
+CPU custom power currently requires AC. Disconnecting it releases CPU control
+and selects Balance. Normal exit and suspend release the saved settings; startup
+and explicit OS resume attempt the saved Custom profile through the same guarded
+path. Failed startup restoration falls back to Balance rather than claiming a
+successful Custom mode. Forced process termination cannot run exit restoration.
+The tuning page retains its original three-column UI and legacy curve editor.
+Unsupported controls remain disabled. The Overview entry retains the standalone
+RPM panel. Classic curve edits are converted to RPM targets when saved, preserving
+software smoothing; CPU-only edits preserve the latest standalone RPM data. The
+two fan interfaces remain separate.
+
+The host refuses to start `openrevo-plugin-power`'s companion agent on this native
+backend. CPU writes also refuse to start while its default loopback port 18946
+is listening. A separately launched agent must be closed before using the native
+controller. This is not exclusive control over arbitrary external tuning tools;
+readback/override detection remains necessary.
+
+References: [plugin source, inspected commit 59cf948](https://github.com/xmsjx/openrevo-plugin-power/tree/59cf94881e597187adff022d10483b5027a5b39b),
+[signed module ABI](https://github.com/namazso/PawnIO.Modules/blob/0.2.11/IntelMSR.p),
+and [RAPL field definitions](https://github.com/torvalds/linux/blob/v6.12/drivers/powercap/intel_rapl_common.c).
+The module binary is unchanged. This change has compile checks and simulated
+register/state tests; no live CPU power writes or load tests were performed.
+
 The existing `inpoutx64` port driver is required, with SHA-256
 `f8965fdce668692c3785afa3559159f9a18287bc0d53abb21902895a8ecf221b`.
 The backend opens its existing device; it does not install a driver or disable

@@ -346,6 +346,79 @@ impl CustomProfileConfig {
     }
 }
 
+/// Reconcile an explicit edit in the classic editor with the shared RPM data.
+/// None keeps the regular profile API; false preserves RPM data on CPU-only edits.
+pub fn sync_legacy_ptl_curve_data(
+    profile: &mut CustomProfileConfig,
+    previous: &CustomProfileConfig,
+    curve_changed: Option<bool>,
+) -> Result<(), String> {
+    match curve_changed {
+        None => return Ok(()),
+        Some(false) => {
+            profile.ptl_rpm_fan_curves = previous.ptl_rpm_fan_curves.clone();
+            return Ok(());
+        }
+        Some(true) => {}
+    }
+    let points = |curve: &[FanCurvePoint]| curve.iter().map(|p| (p.temp, p.duty)).collect::<Vec<_>>();
+    let mut curves = crate::hal::ptl_pmc::RpmFanCurves::from_legacy(&points(&profile.cpu_fan_curve), &points(&profile.gpu_fan_curve))?;
+    curves.smoothing = previous.ptl_rpm_curves().smoothing;
+    profile.ptl_rpm_fan_curves = Some(curves);
+    Ok(())
+}
+
+#[cfg(test)]
+mod legacy_ptl_curve_tests {
+    use super::sync_legacy_ptl_curve_data;
+    use crate::hal::ptl_pmc::{RpmFanCurves, RpmSmoothing};
+    use crate::system::config::{CustomProfileConfig, FanCurvePoint};
+
+    fn standalone_profile() -> CustomProfileConfig {
+        let mut curves = RpmFanCurves::default();
+        curves.fan0[0].rpm = 1700;
+        curves.fan1 = curves.fan0.clone();
+        curves.smoothing = RpmSmoothing { enabled: true, rise_rpm_per_sec: 500, fall_rpm_per_sec: 100, fall_delay_secs: 2 };
+        CustomProfileConfig { ptl_rpm_fan_curves: Some(curves), ..Default::default() }
+    }
+
+    #[test]
+    fn classic_cpu_edits_keep_newer_standalone_rpm_data() {
+        let previous = standalone_profile();
+        let mut edited = previous.clone();
+        edited.cpu_pl1_watts = 20;
+        edited.cpu_fan_curve[0].duty += 1; // Loading the classic editor can normalize older point arrays.
+        edited.ptl_rpm_fan_curves = Some(RpmFanCurves::default());
+        sync_legacy_ptl_curve_data(&mut edited, &previous, Some(false)).unwrap();
+        assert_eq!(edited.ptl_rpm_fan_curves, previous.ptl_rpm_fan_curves);
+        assert_eq!(edited.cpu_pl1_watts, 20);
+    }
+
+    #[test]
+    fn classic_curve_edits_refresh_rpm_targets_and_preserve_smoothing() {
+        let previous = standalone_profile();
+        let mut edited = previous.clone();
+        edited.cpu_fan_curve = vec![FanCurvePoint { temp: 40, duty: 25 }, FanCurvePoint { temp: 50, duty: 25 }, FanCurvePoint { temp: 95, duty: 100 }];
+        edited.gpu_fan_curve = edited.cpu_fan_curve.clone();
+        sync_legacy_ptl_curve_data(&mut edited, &previous, Some(true)).unwrap();
+        let curves = edited.ptl_rpm_curves();
+        assert_eq!(curves.targets(45), [2200, 2200]);
+        assert_eq!(curves.targets(95), [7500, 7500]);
+        assert_eq!(curves.smoothing, previous.ptl_rpm_curves().smoothing);
+    }
+
+    #[test]
+    fn regular_profile_api_can_still_supply_explicit_rpm_data() {
+        let previous = standalone_profile();
+        let mut edited = previous.clone();
+        edited.cpu_fan_curve[0].duty += 1;
+        edited.ptl_rpm_fan_curves = Some(RpmFanCurves::default());
+        let supplied = edited.ptl_rpm_fan_curves.clone();
+        sync_legacy_ptl_curve_data(&mut edited, &previous, None).unwrap();
+        assert_eq!(edited.ptl_rpm_fan_curves, supplied);
+    }
+}
+
 #[cfg(test)]
 mod rpm_curve_tests {
     use super::*;
@@ -885,7 +958,7 @@ pub fn get_default_builtin_presets() -> Vec<CustomProfilePreset> {
         (true, true, true, true)
     };
 
-    vec![
+    let mut presets = vec![
         CustomProfilePreset {
             id: "preset_silent_beast".to_string(),
             name: "静音狂暴".to_string(),
@@ -1060,7 +1133,21 @@ pub fn get_default_builtin_presets() -> Vec<CustomProfilePreset> {
                 fan_curve_linked: fan_linked,
             },
         },
-    ]
+    ];
+    if crate::hal::declarative::load_matched_manifest().is_some_and(|m| m.capabilities.cpu_power_backend.as_deref() == Some("intel_rapl")) {
+        let cpu = crate::hal::cpu_power::status();
+        if cpu.max_watts >= cpu.min_watts {
+            for preset in &mut presets {
+                let p = &mut preset.profile;
+                p.cpu_pl2_watts = p.cpu_pl2_watts.clamp(cpu.min_watts, cpu.max_watts);
+                p.cpu_pl1_watts = p.cpu_pl1_watts.clamp(cpu.min_watts, p.cpu_pl2_watts);
+                p.cpu_temp_target_enabled = false;
+                p.bios_oc_enabled = false;
+                p.gpu_super_perf = false;
+            }
+        }
+    }
+    presets
 }
 
 pub fn ensure_default_profiles() {

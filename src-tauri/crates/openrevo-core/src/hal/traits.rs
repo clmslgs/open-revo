@@ -130,6 +130,16 @@ pub trait HardwareDriver: MechrevoHardwareHAL + Send + Sync {
     /// Probe if current machine hardware matches and is supported by this driver
     fn probe(&self) -> bool;
 
+    /// Activate the CPU backend's custom package power profile. Unsupported by default.
+    fn apply_cpu_power_profile(&self, _pl1: u16, _pl2: u16) -> Result<(), HalError> {
+        Err(HalError::UnsupportedModel("CPU package power backend is not declared".into()))
+    }
+
+    /// Edit an existing CPU power session, without changing firmware mode.
+    fn update_cpu_power_limits(&self, _pl1: u16, _pl2: u16) -> Result<(), HalError> {
+        Err(HalError::UnsupportedModel("CPU package power backend is not declared".into()))
+    }
+
     /// Read active performance mode
     fn get_performance_mode(&self) -> Result<HardwarePowerMode, HalError>;
 

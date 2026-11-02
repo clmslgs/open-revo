@@ -260,6 +260,7 @@ pub fn run() {
             commands::hardware_cmd::set_sleep_guard_option,
             commands::hardware_cmd::set_master_sleep_guard,
             commands::hardware_cmd::set_sleep_auto_office,
+            commands::tuning_cmd::get_cpu_power_status,
             commands::hardware_cmd::get_custom_profile,
             commands::hardware_cmd::reset_custom_profile_to_defaults,
             commands::hardware_cmd::apply_custom_profile,

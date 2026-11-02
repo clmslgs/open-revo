@@ -2,6 +2,9 @@
 
 // pub mod baolongda_guard;
 pub mod declarative;
+pub mod cpu_power;
+mod intel_msr;
+
 pub mod cpu_temperature;
 pub mod ptl_pmc;
 pub mod fan_policy;

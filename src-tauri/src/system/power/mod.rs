@@ -280,8 +280,22 @@ pub fn spawn_hardware_state_restore(ec_for_restore: crate::driver::ec_bridge::Sh
                 4 => crate::hal::HardwarePowerMode::Custom,
                 _ => crate::hal::HardwarePowerMode::Balance,
             };
-            let _ = hal.set_performance_mode(hw_mode);
-            ec_for_restore.lock().set_power_mode_from_hardware(effective_power_mode);
+            let actual_mode = match hal.set_performance_mode(hw_mode) {
+                Ok(()) => effective_power_mode,
+                Err(e) => {
+                    crate::log_error!("POWER_RESTORE", "Cannot restore saved performance mode: {}", e);
+                    if let Err(e) = hal.set_performance_mode(crate::hal::HardwarePowerMode::Balance) {
+                        crate::log_error!("POWER_RESTORE", "Cannot select fallback mode: {}", e);
+                        return;
+                    }
+                    let mut fallback = crate::system::config::load_config();
+                    fallback.power_mode = 2;
+                    crate::system::config::save_config(&fallback);
+                    2
+                }
+            };
+            ec_for_restore.lock().set_power_mode_from_hardware(actual_mode);
+            crate::system::tray::update_tray_power_mode(actual_mode);
             crate::log_info!("POWER_RESTORE", "Thin & light startup power mode applied via HAL: {:?}", hw_mode);
 
             // Restore battery health limit via HAL if applicable

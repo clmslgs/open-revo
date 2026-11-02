@@ -266,11 +266,25 @@ impl EcBridge {
     }
 
     pub fn get_power_mode(&self) -> u8 {
+        // Native mode requests commit config only after the synchronous HAL succeeds.
+        // Keep shortcuts, tray and IPC aligned even when they bypass the legacy EC cache.
+        if crate::hal::declarative::load_matched_manifest().is_some_and(|m| m.capabilities.cpu_power_backend.as_deref() == Some("intel_rapl")) {
+            return crate::system::config::load_config().power_mode;
+        }
         self.cache.lock().power_mode
     }
 
     pub fn set_power_mode(&self, ui_mode: u8) {
         crate::log_info!("EC_BRIDGE", "User triggered set_power_mode: {}", ui_mode);
+        if crate::hal::declarative::load_matched_manifest().is_some_and(|m| m.capabilities.cpu_power_backend.as_deref() == Some("intel_rapl")) {
+            let mode = match ui_mode { 1 => crate::hal::HardwarePowerMode::Office, 2 => crate::hal::HardwarePowerMode::Balance, 3 => crate::hal::HardwarePowerMode::Turbo, 4 => crate::hal::HardwarePowerMode::Custom, _ => return };
+            match crate::hal::get_hardware_driver().set_performance_mode(mode) {
+                Ok(()) => self.set_power_mode_from_hardware(ui_mode),
+                Err(e) => crate::log_error!("CPU_POWER", "Performance mode request failed: {}", e),
+            }
+            return;
+        }
+
         {
             let mut c = self.cache.lock();
             c.power_mode = ui_mode;

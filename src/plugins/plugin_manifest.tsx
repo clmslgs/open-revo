@@ -30,6 +30,8 @@ export interface ModelCapabilities {
   cpu_vendor?: 'amd' | 'intel' | string;
   cpu_tuning_type?: 'intel_pl' | 'amd_smu' | 'none' | string;
   cpu_supports_fppt?: boolean;
+  cpu_power_backend?: string;
+  cpu_power_max_watts?: number | null;
   gpu_power_tuning_mode?: 'discrete_manual' | 'mode_locked' | 'none' | string;
   cpu_name?: string;
   battery_charge_limit?: boolean;

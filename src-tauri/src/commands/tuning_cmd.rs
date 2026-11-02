@@ -253,10 +253,44 @@ pub fn reset_custom_profile_to_defaults() -> crate::system::config::CustomProfil
     model_default
 }
 
+pub fn uses_native_cpu_power() -> bool {
+    crate::hal::declarative::load_matched_manifest().is_some_and(|m|
+        m.capabilities.cpu_power_backend.as_deref() == Some("intel_rapl"))
+}
+
+#[tauri::command]
+pub fn get_cpu_power_status() -> Result<crate::hal::cpu_power::CpuPowerStatus, String> {
+    if !uses_native_cpu_power() { return Err("当前机型未声明独立 CPU 功耗接口".into()); }
+    Ok(crate::hal::cpu_power::status())
+}
+
+fn apply_native_cpu_profile(profile: &crate::system::config::CustomProfileConfig) -> Result<(), String> {
+    crate::hal::get_hardware_driver().apply_cpu_power_profile(profile.cpu_pl1_watts, profile.cpu_pl2_watts)
+        .map_err(|e| e.to_string())
+}
+
+fn update_native_cpu_profile(profile: &crate::system::config::CustomProfileConfig) -> Result<(), String> {
+    crate::hal::get_hardware_driver().update_cpu_power_limits(profile.cpu_pl1_watts, profile.cpu_pl2_watts)
+        .map_err(|e| e.to_string())
+}
+
+// The classic curve editor edits legacy intensity points. Keep its saved RPM
+// projection current while retaining the independent panel's smoothing settings.
+fn sync_legacy_ptl_curve(
+    profile: &mut crate::system::config::CustomProfileConfig,
+    previous: &crate::system::config::CustomProfileConfig,
+    curve_changed: Option<bool>,
+) -> Result<(), String> {
+    if !uses_ptl_pmc() { return Ok(()); }
+    crate::system::config::sync_legacy_ptl_curve_data(profile, previous, curve_changed)
+}
+
+
 #[tauri::command]
 pub fn apply_custom_profile(
-    profile: crate::system::config::CustomProfileConfig,
+    mut profile: crate::system::config::CustomProfileConfig,
     ec_state: State<'_, SharedEcBridge>,
+    legacy_fan_curve_changed: Option<bool>,
 ) -> Result<(), String> {
     if crate::hal::declarative::load_matched_manifest()
         .is_some_and(|manifest| !manifest.capabilities.power_modes.iter().any(|mode| mode == "custom"))
@@ -286,6 +320,14 @@ pub fn apply_custom_profile(
         return Err(msg.to_string());
     }
 
+    if uses_native_cpu_power() {
+        sync_legacy_ptl_curve(&mut profile, &cfg.custom_profile, legacy_fan_curve_changed)?;
+        let mut preset = crate::system::config::list_profiles().into_iter()
+            .find(|p| p.id == cfg.active_profile_id).ok_or("未找到当前方案，请重新选择方案后应用")?;
+        apply_native_cpu_profile(&profile)?;
+        preset.profile = profile.clone();
+        crate::system::config::save_profile_file(&preset)?;
+    }
     let is_dc = is_dc_round_plugged_in();
     cfg.custom_profile = profile.clone();
     cfg.power_mode = 4;
@@ -299,7 +341,9 @@ pub fn apply_custom_profile(
     // Declarative hardware dispatch on custom profile apply
     sync_custom_profile_to_declarative_hardware(&profile);
 
-    ec_state.lock().set_power_mode(4);
+    if uses_native_cpu_power() {
+        ec_state.lock().set_power_mode_from_hardware(4);
+    } else { ec_state.lock().set_power_mode(4); }
 
     Ok(())
 }
@@ -596,6 +640,18 @@ pub fn set_active_profile_id(
     let target = profiles.into_iter().find(|p| p.id == id)
         .ok_or_else(|| format!("未找到指定的方案 ID: {}", id))?;
 
+    if uses_native_cpu_power() {
+        if !is_dc_round_plugged_in() { return Err("请连接电源适配器后应用 CPU 自定义功耗".into()); }
+        apply_native_cpu_profile(&target.profile)?;
+        let mut cfg = crate::system::config::load_config();
+        cfg.active_profile_id = id;
+        cfg.custom_profile = target.profile.clone();
+        cfg.power_mode = 4;
+        cfg.power_mode_ac = 4;
+        crate::system::config::save_config(&cfg);
+        ec_state.lock().set_power_mode_from_hardware(4);
+        return Ok(target);
+    }
     let mut cfg = crate::system::config::load_config();
     cfg.active_profile_id = id.clone();
     cfg.custom_profile = target.profile.clone();
@@ -623,9 +679,25 @@ pub fn set_active_profile_id(
 
 #[tauri::command]
 pub fn save_profile_preset(
-    preset: crate::system::config::CustomProfilePreset,
+    mut preset: crate::system::config::CustomProfilePreset,
     _ec_state: State<'_, SharedEcBridge>,
+    legacy_fan_curve_changed: Option<bool>,
 ) -> Result<(), String> {
+    if uses_native_cpu_power() {
+        let mut cfg = crate::system::config::load_config();
+        if cfg.active_profile_id == preset.id {
+            sync_legacy_ptl_curve(&mut preset.profile, &cfg.custom_profile, legacy_fan_curve_changed)?;
+        }
+        if cfg.active_profile_id == preset.id && crate::hal::cpu_power::is_active() {
+            update_native_cpu_profile(&preset.profile)?;
+        }
+        crate::system::config::save_profile_file(&preset)?;
+        if cfg.active_profile_id == preset.id {
+            cfg.custom_profile = preset.profile.clone();
+            crate::system::config::save_config(&cfg);
+        }
+        return Ok(());
+    }
     crate::system::config::save_profile_file(&preset)?;
 
     let mut cfg = crate::system::config::load_config();
@@ -694,7 +766,12 @@ pub fn reset_profile_preset(id: String) -> Result<crate::system::config::CustomP
     };
 
     let is_declarative = crate::hal::declarative::load_matched_manifest().is_some();
-    if is_declarative {
+    if uses_native_cpu_power() {
+        let cfg = crate::system::config::load_config();
+        if cfg.active_profile_id == id && crate::hal::cpu_power::is_active() {
+            update_native_cpu_profile(&target.profile)?;
+        }
+    } else if is_declarative {
         sync_custom_profile_to_declarative_hardware(&target.profile);
     } else {
         // Heal GPU hardware contract baseline immediately upon reset
@@ -951,6 +1028,19 @@ pub fn apply_live_custom_tweak(
 ) -> Result<(), String> {
     use crate::driver::wmi_ec;
     let cfg = crate::system::config::load_config();
+    if uses_native_cpu_power() {
+        if !crate::hal::cpu_power::is_active() { return Err("请先应用极客自定义模式，再实时调节功耗".into()); }
+        if pl1.is_some() || pl2.is_some() {
+            let current = crate::hal::cpu_power::status();
+            let p1 = pl1.or(current.pl1_watts.map(|v| v.round() as u16)).ok_or("无法读取当前 PL1")?;
+            let p2 = pl2.or(current.pl2_watts.map(|v| v.round() as u16)).ok_or("无法读取当前 PL2")?;
+            update_native_cpu_profile(&crate::system::config::CustomProfileConfig {
+                cpu_pl1_watts: p1, cpu_pl2_watts: p2, ..cfg.custom_profile
+            })?;
+        }
+        return Ok(());
+    }
+
     if !is_dc_round_plugged_in() && !cfg.unlock_battery_power_limit {
         return Ok(());
     }

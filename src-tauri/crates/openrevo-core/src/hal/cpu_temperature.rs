@@ -1,35 +1,11 @@
 //! Read the Intel package digital thermal sensor through an installed PawnIO driver.
 //! ACPI thermal zones are intentionally excluded: they can describe the chassis.
 
-use std::fs::{File, OpenOptions};
+use super::intel_msr::{IntelMsr, ThreadAffinity};
+use super::vault::intel::{MSR_PACKAGE_THERM_STATUS, MSR_TEMPERATURE_TARGET, TEMPERATURE_VALID};
 use std::io;
-use std::os::windows::fs::OpenOptionsExt;
-use std::os::windows::io::AsRawHandle;
 use std::time::{Duration, Instant};
-
-const INTEL_MSR_MODULE: &[u8] = include_bytes!("../../resources/pawnio/IntelMSR.bin");
-const IOCTL_LOAD_BINARY: u32 = (41394 << 16) | (0x821 << 2);
-const IOCTL_EXECUTE: u32 = (41394 << 16) | (0x841 << 2);
-const MSR_TEMPERATURE_TARGET: u64 = 0x1A2;
-const MSR_PACKAGE_THERM_STATUS: u64 = 0x1B1;
-const TEMPERATURE_VALID: u64 = 1 << 31;
 const PROBE_INTERVAL: Duration = Duration::from_secs(30);
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn DeviceIoControl(
-        device: isize,
-        control_code: u32,
-        input: *const std::ffi::c_void,
-        input_size: u32,
-        output: *mut std::ffi::c_void,
-        output_size: u32,
-        returned: *mut u32,
-        overlapped: *mut std::ffi::c_void,
-    ) -> i32;
-    fn GetCurrentThread() -> *mut std::ffi::c_void;
-    fn SetThreadAffinityMask(thread: *mut std::ffi::c_void, mask: usize) -> usize;
-}
 
 fn supports_package_sensor() -> bool {
     #[cfg(target_arch = "x86_64")]
@@ -60,34 +36,11 @@ fn decode_package_temperature(target: u64, status: u64) -> Option<i32> {
     (celsius > 0 && celsius <= tj_max).then_some(celsius)
 }
 
-struct ThreadAffinity(usize);
-
-impl ThreadAffinity {
-    fn pin() -> io::Result<Self> {
-        // Both MSRs must be read on the same CPU/package.
-        let previous = unsafe { SetThreadAffinityMask(GetCurrentThread(), 1) };
-        if previous == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(Self(previous))
-    }
-}
-
-impl Drop for ThreadAffinity {
-    fn drop(&mut self) {
-        unsafe {
-            SetThreadAffinityMask(GetCurrentThread(), self.0);
-        }
-    }
-}
-
-/// A handle scoped to the signed IntelMSR module; this API only reads temperature.
+/// Read-only view of the shared signed Intel MSR transport.
 pub struct IntelPackageTemperature {
-    device: File,
+    device: IntelMsr,
 }
-
 impl IntelPackageTemperature {
-    /// Connect to an already installed driver. This never installs or starts services.
     pub fn open() -> io::Result<Self> {
         if !supports_package_sensor() {
             return Err(io::Error::new(
@@ -95,62 +48,14 @@ impl IntelPackageTemperature {
                 "Intel package thermal sensor unavailable",
             ));
         }
-        let sensor = Self {
-            device: OpenOptions::new()
-                .read(true)
-                .write(true)
-                .access_mode(3)
-                .share_mode(3)
-                .open(r"\\?\GLOBALROOT\Device\PawnIO")?,
-        };
-        sensor.ioctl(IOCTL_LOAD_BINARY, INTEL_MSR_MODULE, &mut [])?;
-        Ok(sensor)
+        Ok(Self {
+            device: IntelMsr::open()?,
+        })
     }
-
-    fn ioctl(&self, code: u32, input: &[u8], output: &mut [u8]) -> io::Result<usize> {
-        let mut returned = 0;
-        let success = unsafe {
-            DeviceIoControl(
-                self.device.as_raw_handle() as isize,
-                code,
-                input.as_ptr().cast(),
-                input.len() as u32,
-                if output.is_empty() {
-                    std::ptr::null_mut()
-                } else {
-                    output.as_mut_ptr().cast()
-                },
-                output.len() as u32,
-                &mut returned,
-                std::ptr::null_mut(),
-            )
-        };
-        if success == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(returned as usize)
-    }
-
-    fn read_msr(&self, index: u64) -> io::Result<u64> {
-        // PawnIO ABI: 32-byte, NUL-padded function name followed by 64-bit cells.
-        let mut input = [0u8; 40];
-        let operation = b"ioctl_read_msr";
-        input[..operation.len()].copy_from_slice(operation);
-        input[32..].copy_from_slice(&index.to_le_bytes());
-        let mut output = [0u8; 8];
-        if self.ioctl(IOCTL_EXECUTE, &input, &mut output)? != output.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Incomplete temperature MSR read",
-            ));
-        }
-        Ok(u64::from_le_bytes(output))
-    }
-
     pub fn read_celsius(&self) -> io::Result<i32> {
         let _affinity = ThreadAffinity::pin()?;
-        let target = self.read_msr(MSR_TEMPERATURE_TARGET)?;
-        let status = self.read_msr(MSR_PACKAGE_THERM_STATUS)?;
+        let target = self.device.read_msr(MSR_TEMPERATURE_TARGET)?;
+        let status = self.device.read_msr(MSR_PACKAGE_THERM_STATUS)?;
         decode_package_temperature(target, status).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,

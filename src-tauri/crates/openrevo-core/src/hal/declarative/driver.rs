@@ -30,6 +30,7 @@ mod contract_tests {
         let mut manifest = ptl_manifest();
         manifest.channels.remove("pm2");
         manifest.capabilities.battery_charge_limit = false;
+        manifest.capabilities.power_modes.retain(|mode| mode != "custom");
         let driver = driver(manifest);
         assert!(matches!(driver.set_battery_health(BatteryHealthMode::Balance), Err(HalError::UnsupportedModel(_))));
         assert!(matches!(driver.set_fan_boost(true), Err(HalError::UnsupportedModel(_))));
@@ -218,8 +219,8 @@ impl DeclarativeHardwareDriver {
     }
 }
 
-impl MechrevoHardwareHAL for DeclarativeHardwareDriver {
-    fn set_performance_mode(&self, mode: HardwarePowerMode) -> Result<(), HalError> {
+impl DeclarativeHardwareDriver {
+    fn set_declared_mode(&self, mode: HardwarePowerMode) -> Result<(), HalError> {
         let requested_mode = match mode {
             HardwarePowerMode::Office => "office",
             HardwarePowerMode::Balance => "balance",
@@ -301,6 +302,33 @@ impl MechrevoHardwareHAL for DeclarativeHardwareDriver {
             "set_power_mode for {:?} not defined in driver manifest",
             mode
         )))
+    }
+
+}
+
+impl MechrevoHardwareHAL for DeclarativeHardwareDriver {
+    fn set_performance_mode(&self, mode: HardwarePowerMode) -> Result<(), HalError> {
+        if self.manifest.capabilities.cpu_power_backend.as_deref() != Some("intel_rapl") {
+            return self.set_declared_mode(mode);
+        }
+        if mode == HardwarePowerMode::Custom {
+            if !self.manifest.capabilities.power_modes.iter().any(|m| m == "custom") {
+                return Err(HalError::UnsupportedModel("CPU custom mode is not declared".into()));
+            }
+            let p = crate::system::config::load_config().custom_profile;
+            return self.apply_cpu_power_profile(p.cpu_pl1_watts, p.cpu_pl2_watts);
+        }
+        let mut firmware_error = None;
+        let result = crate::hal::cpu_power::transition(None, || match self.set_declared_mode(mode) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let message = error.to_string();
+                firmware_error = Some(error);
+                Err(message)
+            }
+        });
+        if let Some(error) = firmware_error { return Err(error); }
+        result.map_err(HalError::RegisterAccessFailed)
     }
 
     fn set_battery_health(&self, mode: BatteryHealthMode) -> Result<(), HalError> {
@@ -538,6 +566,32 @@ impl MechrevoHardwareHAL for DeclarativeHardwareDriver {
 }
 
 impl HardwareDriver for DeclarativeHardwareDriver {
+    fn update_cpu_power_limits(&self, pl1: u16, pl2: u16) -> Result<(), HalError> {
+        if self.manifest.capabilities.cpu_power_backend.as_deref() != Some("intel_rapl") {
+            return Err(HalError::UnsupportedModel("CPU package power backend is not declared".into()));
+        }
+        crate::hal::cpu_power::update([pl1, pl2]).map_err(HalError::RegisterAccessFailed)
+    }
+
+    fn apply_cpu_power_profile(&self, pl1: u16, pl2: u16) -> Result<(), HalError> {
+        if self.manifest.capabilities.cpu_power_backend.as_deref() != Some("intel_rapl")
+            || !self.manifest.capabilities.power_modes.iter().any(|m| m == "custom") {
+            return Err(HalError::UnsupportedModel("CPU custom mode is not declared".into()));
+        }
+        let active = crate::hal::cpu_power::is_active();
+        let previous = self.read_declared_power_mode()?;
+        let result = crate::hal::cpu_power::transition(Some([pl1, pl2]), ||
+            self.set_declared_mode(HardwarePowerMode::Turbo).map_err(|e| e.to_string()));
+        if result.is_err() && !active {
+            // The CPU policy handles MSR rollback; also restore the chassis preset.
+            self.set_declared_mode(previous)?;
+        }
+        result.map_err(HalError::RegisterAccessFailed)?;
+        self.last_power_mode.store(HardwarePowerMode::Custom as u8, Ordering::SeqCst);
+        Ok(())
+    }
+
+
     fn set_rpm_fan_curves(&self, curves: crate::hal::ptl_pmc::RpmFanCurves) -> Result<(), HalError> {
         if !self.manifest.uses_ptl_pmc() { return Err(HalError::UnsupportedModel("No PM2 RPM curve channel declared".into())); }
         crate::hal::ptl_pmc::set_rpm_curves(curves).map_err(HalError::RegisterAccessFailed)
@@ -571,7 +625,12 @@ impl HardwareDriver for DeclarativeHardwareDriver {
     }
 
     fn get_performance_mode(&self) -> Result<HardwarePowerMode, HalError> {
-        if self.manifest.uses_ptl_pmc() { return self.read_declared_power_mode(); }
+        if self.manifest.uses_ptl_pmc() {
+            let physical = self.read_declared_power_mode()?;
+            return Ok(if physical == HardwarePowerMode::Turbo && crate::hal::cpu_power::is_active() {
+                HardwarePowerMode::Custom
+            } else { physical });
+        }
         for channel in self.manifest.channels.values() {
             if matches!(channel, ChannelDef::WmiIp3) {
                 if let Some(raw) = crate::driver::wmi_ip3::ip3_get_power_mode() {

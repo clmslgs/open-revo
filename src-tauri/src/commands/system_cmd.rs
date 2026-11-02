@@ -1548,6 +1548,8 @@ pub fn get_model_capabilities() -> serde_json::Value {
             "fan_boost_mode": fan_boost_mode,
             "cpu_vendor": cpu_vendor,
             "cpu_tuning_type": cpu_tuning_type,
+            "cpu_power_backend": manifest.capabilities.cpu_power_backend,
+            "cpu_power_max_watts": manifest.capabilities.cpu_power_max_watts,
             "cpu_supports_fppt": cpu_supports_fppt,
             "gpu_power_tuning_mode": gpu_power_tuning_mode,
             "cpu_name": cpu_name,

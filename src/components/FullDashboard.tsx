@@ -82,6 +82,7 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
   onPreviewFormFactor: propOnPreviewFormFactor,
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>(initialTab || 'overview');
+  const [isStandaloneFanOpen, setIsStandaloneFanOpen] = useState(false);
   const [isCustomTuningOpen, setIsCustomTuningOpen] = useState(initialOpenCustomTuning);
   const [showOemModal, setShowOemModal] = useState(false);
   const [isSwitchingService, setIsSwitchingService] = useState(false);
@@ -657,6 +658,7 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
               onToggleBatteryLimit={onToggleBatteryLimit}
               onSwitchRefreshRate={onSwitchRefreshRate}
               onOpenCustomTuning={() => setIsCustomTuningOpen(true)}
+              onOpenFanControl={() => setIsStandaloneFanOpen(true)}
               checkOemGuard={checkOemGuard}
               profileVersion={profileVersion}
             />
@@ -748,8 +750,15 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
         )}
       </div>
 
+      {isStandaloneFanOpen && <div className="sys-modal-backdrop" onClick={() => setIsStandaloneFanOpen(false)}>
+        <div className="sys-modal-card ptl-fan-modal" role="dialog" aria-modal="true" aria-label="手动转速与风扇曲线" onClick={e => e.stopPropagation()}>
+          <div className="sys-modal-header"><h3>手动转速与风扇曲线</h3><button className="toggle-btn" onClick={() => setIsStandaloneFanOpen(false)}>关闭</button></div>
+          <div className="sys-modal-body"><PtlFanControlPanel fan0={status.cpu_fan_rpm} fan1={status.gpu_fan_rpm} /></div>
+        </div>
+      </div>}
+
       {/* Global Custom Tuning Modal Overlay */}
-      {isCustomTuningOpen && capabilities?.fan_control_mode === 'pmc_rpm_curve' ? (
+      {isCustomTuningOpen && capabilities?.fan_control_mode === 'pmc_rpm_curve' && capabilities?.cpu_power_backend !== 'intel_rapl' ? (
         <div className="sys-modal-backdrop" onClick={() => setIsCustomTuningOpen(false)}>
           <div className="sys-modal-card ptl-fan-modal" role="dialog" aria-modal="true" aria-label="手动转速与风扇曲线" onClick={e => e.stopPropagation()}>
             <div className="sys-modal-header"><h3>手动转速与风扇曲线</h3><button className="toggle-btn" onClick={() => setIsCustomTuningOpen(false)}>关闭</button></div>

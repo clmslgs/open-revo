@@ -278,3 +278,27 @@ export interface CpuFreqInfo {
 }
 
 
+
+export interface CpuPowerStatus {
+  backend: string;
+  available: boolean;
+  pl1_writable: boolean;
+  pl2_writable: boolean;
+  pl4_writable: boolean;
+  temperature_writable: boolean;
+  ratio_writable: boolean;
+  voltage_writable: boolean;
+  locked: boolean;
+  active: boolean;
+  overridden: boolean;
+  write_verified: boolean;
+  pl1_watts: number | null;
+  pl2_watts: number | null;
+  pl1_enabled: boolean;
+  pl2_enabled: boolean;
+  pl1_window_seconds: number | null;
+  pl2_window_seconds: number | null;
+  min_watts: number;
+  max_watts: number;
+  error: string | null;
+}

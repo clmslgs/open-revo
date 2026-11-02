@@ -3203,3 +3203,7 @@ body,
 
 
 
+
+/* Capability states reuse the original tuning controls across all themes. */
+.tuning-control-disabled { opacity: 0.45; }
+.tuning-control-error { color: var(--status-error); font-size: 11px; line-height: 1.5; }

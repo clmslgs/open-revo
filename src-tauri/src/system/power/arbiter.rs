@@ -147,6 +147,16 @@ impl PowerArbiter {
             target_mode
         );
 
+        let native_cpu = crate::hal::declarative::load_matched_manifest().is_some_and(|m| m.capabilities.cpu_power_backend.as_deref() == Some("intel_rapl"));
+        if native_cpu {
+            let mode = match target_mode { 1 => crate::hal::HardwarePowerMode::Office, 2 => crate::hal::HardwarePowerMode::Balance, 3 => crate::hal::HardwarePowerMode::Turbo, 4 => crate::hal::HardwarePowerMode::Custom, _ => return None };
+            if let Err(e) = crate::hal::get_hardware_driver().set_performance_mode(mode) {
+                crate::log_error!("CPU_POWER", "Power intent failed: {}", e);
+                *get_arbiter_mutex().lock().unwrap_or_else(|p| p.into_inner()) = None;
+                return None;
+            }
+        }
+
         // 4. Update configuration persistence according to source
         let mut updated_cfg = cfg.clone();
         match intent {
@@ -187,7 +197,8 @@ impl PowerArbiter {
         }
 
         // 5. Apply full hardware and OS power states (EC hardware mode & overlay)
-        super::apply_full_power_mode(target_mode);
+        if native_cpu { super::apply_windows_power_overlay(target_mode); }
+        else { super::apply_full_power_mode(target_mode); }
 
         // 6. Synchronize Tray status
         crate::system::tray::update_tray_power_mode(target_mode);

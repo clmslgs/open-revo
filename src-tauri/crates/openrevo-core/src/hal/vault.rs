@@ -58,3 +58,21 @@ mod tests {
         }
     }
 }
+
+/// Signed PawnIO Intel module ABI and package RAPL fields (Intel SDM).
+pub mod intel {
+    pub const IOCTL_LOAD_BINARY: u32 = (41394 << 16) | (0x821 << 2);
+    pub const IOCTL_EXECUTE: u32 = (41394 << 16) | (0x841 << 2);
+    pub const MSR_TEMPERATURE_TARGET: u64 = 0x1a2;
+    pub const MSR_PACKAGE_THERM_STATUS: u64 = 0x1b1;
+    pub const TEMPERATURE_VALID: u64 = 1 << 31;
+    pub const MSR_RAPL_POWER_UNIT: u64 = 0x606;
+    pub const MSR_PKG_POWER_LIMIT: u64 = 0x610;
+    pub const POWER_VALUE_MASK: u64 = 0x7fff;
+    pub const PL1_ENABLE: u64 = 1 << 15;
+    pub const PL2_ENABLE: u64 = 1 << 47;
+    pub const PACKAGE_LOCK: u64 = 1 << 63;
+    pub const PL1_FIELDS: u64 = POWER_VALUE_MASK | PL1_ENABLE;
+    pub const PL2_FIELDS: u64 = (POWER_VALUE_MASK << 32) | PL2_ENABLE;
+    pub const OWNED_FIELDS: u64 = PL1_FIELDS | PL2_FIELDS;
+}

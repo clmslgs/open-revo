@@ -85,6 +85,10 @@ pub struct ModelCapabilities {
     #[serde(default)]
     pub cpu_tuning_type: Option<String>,
     #[serde(default)]
+    pub cpu_power_backend: Option<String>,
+    #[serde(default)]
+    pub cpu_power_max_watts: Option<u16>,
+    #[serde(default)]
     pub cpu_supports_fppt: Option<bool>,
     #[serde(default)]
     pub gpu_power_tuning_mode: Option<String>,
@@ -323,6 +327,11 @@ mod tests {
         assert!(manifest.capabilities.fan_independent_channels);
         assert!(!manifest.capabilities.fan_ramp_rate);
         assert!(manifest.capabilities.fan_software_smoothing);
+        assert_eq!(manifest.capabilities.cpu_power_backend.as_deref(), Some("intel_rapl"));
+        assert_eq!(manifest.capabilities.cpu_power_max_watts, Some(50));
+        assert!(manifest.capabilities.power_modes.iter().any(|mode| mode == "custom"));
+        // Custom is implemented by the CPU backend, not an invented fourth WMI command.
+        assert!(manifest.actions["set_power_mode"].for_mode("custom").is_none());
         assert_eq!(manifest.capabilities.min_fan_rpm, Some(super::super::super::fan_policy::MIN_RPM));
         assert_eq!(manifest.capabilities.fan_control_mode.as_deref(), Some("pmc_rpm_curve"));
         assert!(manifest.uses_ptl_pmc());
