@@ -183,7 +183,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           onSelectMode={(mode) => checkOemGuard(() => onSetPowerMode(mode))}
           onOpenCustomTuning={() => checkOemGuard(onOpenCustomTuning)}
         />
-        {capabilities?.fan_control_mode === 'pmc_pwm' && <button className="toggle-btn ptl-fan-launch" onClick={() => checkOemGuard(onOpenCustomTuning)}>手动转速与风扇曲线</button>}
+        {capabilities?.fan_control_mode === 'pmc_rpm_curve' && <button className="toggle-btn ptl-fan-launch" onClick={() => checkOemGuard(onOpenCustomTuning)}>手动转速与风扇曲线</button>}
       </div>
 
       {/* 3. 中部高频功能微调 (一键强冷 / 拔电自动低刷 / 屏幕多屏刷新率) */}

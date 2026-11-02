@@ -13,8 +13,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|a| a == "--sample-fans") {
         let mut sensor = openrevo_core::hal::cpu_temperature::PackageTemperatureReader::new();
         for sample in 1..=8 {
-            println!("Sample {sample}: CPU Package {:?} C; fan RPM {:?}", sensor.read_celsius(), ptl::read_rpm()?);
-            if sample < 8 { thread::sleep(Duration::from_secs(1)); }
+            println!(
+                "Sample {sample}: CPU Package {:?} C; fan RPM {:?}",
+                sensor.read_celsius(),
+                ptl::read_rpm()?
+            );
+            if sample < 8 {
+                thread::sleep(Duration::from_secs(1));
+            }
         }
         return Ok(());
     }
@@ -23,6 +29,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !std::env::args().any(|a| a == "--verify-controls") {
         return Ok(());
     }
+    // Protocol convergence checks intentionally disable software transition delays.
+    ptl::set_smoothing(ptl::RpmSmoothing {
+        enabled: false,
+        ..Default::default()
+    })?;
     let original_limit = if battery.enabled { battery.lower } else { 100 };
     if ![60, 80, 100].contains(&original_limit) {
         return Err("Cannot restore this battery threshold with this probe".into());
@@ -50,23 +61,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if rpm[0].abs_diff(4000) > 900 || rpm[1].abs_diff(4500) > 900 {
         return Err("Manual fan RPM did not converge".into());
     }
-    ptl::set_curve(vec![(30, 50), (100, 50)])?;
-    thread::sleep(Duration::from_secs(4));
+    let curves = ptl::RpmFanCurves {
+        smoothing: ptl::RpmSmoothing {
+            enabled: false,
+            ..Default::default()
+        },
+        fan0: vec![
+            ptl::RpmCurvePoint {
+                temp: 30,
+                rpm: 2200,
+            },
+            ptl::RpmCurvePoint {
+                temp: 100,
+                rpm: 2200,
+            },
+        ],
+        fan1: vec![
+            ptl::RpmCurvePoint {
+                temp: 30,
+                rpm: 3000,
+            },
+            ptl::RpmCurvePoint {
+                temp: 100,
+                rpm: 3000,
+            },
+        ],
+        linked: false,
+    };
+    ptl::set_rpm_curves(curves)?;
+    thread::sleep(Duration::from_secs(8));
+    let curve_rpm = ptl::read_rpm()?;
     println!(
-        "Curve PWM 50 => {:?}; {:?}",
-        ptl::read_rpm()?,
+        "Independent RPM curve 2200/3000 => {:?}; {:?}",
+        curve_rpm,
         ptl::status()
     );
     assert_eq!(ptl::status().mode, "curve");
-    assert_eq!(ptl::status().duty_percent, Some(50));
-    if verify_low {
-        ptl::set_curve(vec![(30, 25), (100, 25)])?;
-        thread::sleep(Duration::from_secs(5));
-        let low = ptl::read_rpm()?;
-        println!("Minimum curve PWM25 => {low:?}");
-        if low.contains(&0) {
-            return Err("Minimum PWM did not keep both fans spinning".into());
-        }
+    assert_eq!(ptl::status().target_rpm, [2200, 3000]);
+    if curve_rpm[0].abs_diff(2200) > 900 || curve_rpm[1].abs_diff(3000) > 900 {
+        return Err("Independent RPM curve did not converge".into());
     }
     ptl::suspend_or_exit();
     assert_eq!(ptl::status().mode, "auto");

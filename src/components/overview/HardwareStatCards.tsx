@@ -35,6 +35,13 @@ export const HardwareStatCards: React.FC<HardwareStatCardsProps> = ({ status, ca
   const isPureIgpu = capabilities ? capabilities.discrete_gpu === false : !status.gpu_name;
 
   const isApuOrIgpu = isPureIgpu;
+  const fanControl = status.fan_control;
+  const fanLabel = fanControl
+    ? fanControl.resume_pending ? '保护·待恢复'
+      : fanControl.mode === 'curve' ? '转速曲线'
+      : fanControl.mode === 'manual' ? '固定转速'
+      : fanControl.mode === 'auto' ? '原厂自动' : '恢复自动中'
+    : status.fan_boost ? '一键强冷' : '自动温控';
 
   return (
     <div className="telemetry-cards-grid" data-slot="telemetry-grid">
@@ -262,19 +269,9 @@ export const HardwareStatCards: React.FC<HardwareStatCardsProps> = ({ status, ca
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--text-dim)' }}>
           <span>{isPureIgpu ? (status.gpu_fan_rpm > 0 ? '双涡轮高效散热' : '智能高效散热') : '双风扇散热'}</span>
-          <span
-            style={{
-              background: status.fan_boost ? 'rgba(244, 63, 94, 0.15)' : 'rgba(255, 255, 255, 0.07)',
-              border: status.fan_boost ? '1px solid rgba(244, 63, 94, 0.35)' : '1px solid rgba(255, 255, 255, 0.12)',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '11.5px',
-              fontWeight: 600,
-              color: status.fan_boost ? '#fb7185' : '#38bdf8',
-            }}
-          >
-            {status.fan_boost ? '一键强冷' : '自动温控'}
+          <span className="fan-control-badge" data-mode={fanControl?.resume_pending ? 'protected' : fanControl?.mode ?? (status.fan_boost ? 'boost' : 'auto')}
+            title={fanControl?.error ?? (fanControl?.mode === 'curve' || fanControl?.mode === 'manual' ? `目标 ${fanControl.target_rpm.join(' / ')} RPM` : '由固件按当前性能模式自动调速')}>
+            {fanLabel}
           </span>
         </div>
       </div>

@@ -105,6 +105,12 @@ pub trait MechrevoHardwareHAL: Send + Sync {
 /// Universal Hardware Driver Provider Trait.
 /// Represents a hardware communication backend for a specific laptop platform/ODM (Tongfang, Bitland, etc.).
 pub trait HardwareDriver: MechrevoHardwareHAL + Send + Sync {
+    fn set_rpm_fan_curves(&self, _curves: crate::hal::ptl_pmc::RpmFanCurves) -> Result<(), HalError> {
+        Err(HalError::UnsupportedModel("RPM fan curves not supported".into()))
+    }
+    fn set_rpm_fan_smoothing(&self, _smoothing: crate::hal::ptl_pmc::RpmSmoothing) -> Result<(), HalError> {
+        Err(HalError::UnsupportedModel("No software RPM transition control".into()))
+    }
     fn set_manual_fan_rpm(&self, _targets: [u16; 2]) -> Result<(), HalError> {
         Err(HalError::UnsupportedModel("Manual fan RPM not supported".into()))
     }

@@ -10,6 +10,7 @@ export interface DisplayMonitor {
 }
 
 export interface HardwareState {
+  fan_control?: RpmFanControlStatus | null;
   power_mode: number;         // 1: Office, 2: Balance, 3: Beast, 4: Custom
   fan_boost: boolean;        // true if max fan
   battery_limit: number;      // 80 or 100
@@ -176,7 +177,27 @@ export interface FanCurvePoint {
   duty: number;
 }
 
+export interface RpmCurvePoint { temp: number; rpm: number; }
+export interface RpmSmoothing { enabled: boolean; rise_rpm_per_sec: number; fall_rpm_per_sec: number; fall_delay_secs: number; }
+export interface RpmFanCurves { fan0: RpmCurvePoint[]; fan1: RpmCurvePoint[]; linked: boolean; smoothing: RpmSmoothing; }
+export interface FanRpmLimits { minimum: [number, number]; maximum: number; step: number; startup_rpm: number; startup_secs: number; }
+export interface RpmFanControlStatus {
+  smoothing?: RpmSmoothing;
+  smoothing_active?: boolean;
+  transition_rpm?: [number, number];
+  rpm_limits?: FanRpmLimits;
+  mode: string;
+  requested_mode: string;
+  target_rpm: [number, number];
+  applied_rpm?: [number, number];
+  cpu_temperature?: number | null;
+  resume_pending: boolean;
+  recovery_remaining_secs: number;
+  error?: string | null;
+}
+
 export interface CustomProfileConfig {
+  ptl_rpm_fan_curves?: RpmFanCurves | null;
   cpu_temp_target_enabled: boolean;
   cpu_temp_target: number;
   cpu_pl1_watts: number;

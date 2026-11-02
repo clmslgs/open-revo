@@ -17,6 +17,7 @@ pub use crate::system::power_mode::{FactoryPowerPresets, get_factory_power_prese
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareState {
+    pub fan_control: Option<crate::hal::ptl_pmc::FanControlStatus>,
     pub power_mode: u8,
     pub fan_boost: bool,
     pub battery_limit: u8,
@@ -149,6 +150,8 @@ pub fn collect_hardware_state(
     let cfg = crate::system::config::load_config();
 
     HardwareState {
+        fan_control: crate::hal::declarative::load_matched_manifest()
+            .filter(|manifest| manifest.uses_ptl_pmc()).map(|_| crate::hal::ptl_pmc::status()),
         power_mode,
         fan_boost,
         battery_limit,
@@ -1540,6 +1543,7 @@ pub fn get_model_capabilities() -> serde_json::Value {
             "fan_custom_curve": manifest.capabilities.fan_custom_curve,
             "fan_independent_channels": manifest.capabilities.fan_independent_channels,
             "fan_ramp_rate": manifest.capabilities.fan_ramp_rate,
+            "fan_software_smoothing": manifest.capabilities.fan_software_smoothing,
             "fan_control_mode": fan_control_mode,
             "fan_boost_mode": fan_boost_mode,
             "cpu_vendor": cpu_vendor,

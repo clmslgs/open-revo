@@ -749,7 +749,7 @@ export const FullDashboard: React.FC<FullDashboardProps> = ({
       </div>
 
       {/* Global Custom Tuning Modal Overlay */}
-      {isCustomTuningOpen && capabilities?.fan_control_mode === 'pmc_pwm' ? (
+      {isCustomTuningOpen && capabilities?.fan_control_mode === 'pmc_rpm_curve' ? (
         <div className="sys-modal-backdrop" onClick={() => setIsCustomTuningOpen(false)}>
           <div className="sys-modal-card ptl-fan-modal" role="dialog" aria-modal="true" aria-label="手动转速与风扇曲线" onClick={e => e.stopPropagation()}>
             <div className="sys-modal-header"><h3>手动转速与风扇曲线</h3><button className="toggle-btn" onClick={() => setIsCustomTuningOpen(false)}>关闭</button></div>

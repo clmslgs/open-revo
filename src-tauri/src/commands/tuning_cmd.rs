@@ -360,14 +360,15 @@ pub fn get_fan_control_state() -> Result<crate::hal::ptl_pmc::FanControlStatus, 
     Ok(crate::hal::ptl_pmc::status())
 }
 
-fn save_ptl_fan_policy(curve: Option<Vec<crate::system::config::FanCurvePoint>>, enabled: bool) -> Result<(), String> {
+fn save_ptl_fan_policy(curves: Option<crate::hal::ptl_pmc::RpmFanCurves>, enabled: Option<bool>) -> Result<(), String> {
     let mut cfg = crate::system::config::load_config();
-    cfg.fan_boost = false;
-    cfg.custom_profile.fan_curve_enabled = enabled;
-    cfg.custom_profile.fan_isolated_output = enabled;
-    if let Some(curve) = curve {
-        cfg.custom_profile.cpu_fan_curve = curve.clone();
-        cfg.custom_profile.gpu_fan_curve = curve;
+    if let Some(enabled) = enabled {
+        cfg.fan_boost = false;
+        cfg.custom_profile.fan_curve_enabled = enabled;
+        cfg.custom_profile.fan_isolated_output = enabled;
+    }
+    if let Some(curves) = curves {
+        cfg.custom_profile.ptl_rpm_fan_curves = Some(curves);
     }
     // Startup reloads fan settings from the active profile, not the config cache.
     let mut preset = crate::system::config::list_profiles().into_iter()
@@ -381,23 +382,59 @@ fn save_ptl_fan_policy(curve: Option<Vec<crate::system::config::FanCurvePoint>>,
 
 #[tauri::command]
 pub fn set_manual_fan_rpm(cpu_rpm: u16, gpu_rpm: u16) -> Result<(), String> {
+    if uses_ptl_pmc() {
+        let smoothing = crate::system::config::load_config().custom_profile.ptl_rpm_curves().smoothing;
+        crate::hal::get_hardware_driver().set_rpm_fan_smoothing(smoothing).map_err(|e| e.to_string())?;
+    }
     crate::hal::get_hardware_driver().set_manual_fan_rpm([cpu_rpm, gpu_rpm]).map_err(|e| e.to_string())?;
-    save_ptl_fan_policy(None, false)?;
+    save_ptl_fan_policy(None, Some(false))?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn restore_fan_auto() -> Result<(), String> {
-    crate::hal::get_hardware_driver().restore_fan_auto().map_err(|e| e.to_string())?;
-    save_ptl_fan_policy(None, false)?;
+    if !uses_ptl_pmc() { return Err("当前机型不使用 PM2 风扇控制".into()); }
+    let restored = crate::hal::get_hardware_driver().restore_fan_auto().map_err(|e| e.to_string());
+    let saved = save_ptl_fan_policy(None, Some(false));
+    restored?;
+    saved?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_software_fan_curve(curve: Vec<crate::system::config::FanCurvePoint>) -> Result<(), String> {
-    crate::hal::get_hardware_driver().set_software_fan_curve(curve.iter().map(|p| (p.temp, p.duty)).collect()).map_err(|e| e.to_string())?;
-    save_ptl_fan_policy(Some(curve), true)?;
+    let legacy = curve.iter().map(|p| (p.temp,p.duty)).collect::<Vec<_>>();
+    set_rpm_fan_curves(migrate_ptl_curves(&legacy,&legacy)?)?;
     Ok(())
+}
+
+fn migrate_ptl_curves(cpu: &[(u8,u8)], gpu: &[(u8,u8)]) -> Result<crate::hal::ptl_pmc::RpmFanCurves,String> {
+    let mut curves = crate::hal::ptl_pmc::RpmFanCurves::from_legacy(cpu,gpu)?;
+    curves.smoothing = crate::system::config::load_config().custom_profile.ptl_rpm_curves().smoothing;
+    Ok(curves)
+}
+
+#[tauri::command]
+pub fn get_rpm_fan_curves() -> Result<crate::hal::ptl_pmc::RpmFanCurves, String> {
+    if !uses_ptl_pmc() { return Err("当前机型不使用 PM2 转速曲线".into()); }
+    Ok(crate::system::config::load_config().custom_profile.ptl_rpm_curves())
+}
+
+#[tauri::command]
+pub fn set_rpm_fan_curves(curves: crate::hal::ptl_pmc::RpmFanCurves) -> Result<(), String> {
+    curves.validate()?;
+    crate::hal::get_hardware_driver().set_rpm_fan_curves(curves.clone()).map_err(|e| e.to_string())?;
+    save_ptl_fan_policy(Some(curves), Some(true))
+}
+
+#[tauri::command]
+pub fn set_rpm_fan_smoothing(smoothing: crate::hal::ptl_pmc::RpmSmoothing) -> Result<(), String> {
+    if !uses_ptl_pmc() { return Err("当前机型不使用 PM2 软件平滑".into()); }
+    smoothing.validate()?;
+    let mut curves = crate::system::config::load_config().custom_profile.ptl_rpm_curves();
+    curves.smoothing = smoothing;
+    crate::hal::get_hardware_driver().set_rpm_fan_smoothing(smoothing).map_err(|e| e.to_string())?;
+    save_ptl_fan_policy(Some(curves), None)
 }
 
 #[tauri::command]
@@ -407,7 +444,11 @@ pub fn apply_fan_curve_live(
     cpu_curve: Vec<crate::system::config::FanCurvePoint>,
     gpu_curve: Vec<crate::system::config::FanCurvePoint>,
 ) -> Result<(), String> {
-    if uses_ptl_pmc() { return set_software_fan_curve(cpu_curve); }
+    if uses_ptl_pmc() {
+        let cpu=cpu_curve.iter().map(|p| (p.temp,p.duty)).collect::<Vec<_>>();
+        let gpu=gpu_curve.iter().map(|p| (p.temp,p.duty)).collect::<Vec<_>>();
+        return set_rpm_fan_curves(migrate_ptl_curves(&cpu,&gpu)?);
+    }
     let is_bld_manifest = fan_curve_uses_bld_controller()?;
 
     if is_bld_manifest {
@@ -447,7 +488,14 @@ pub fn toggle_fan_isolated_output(
 ) -> Result<bool, String> {
     if uses_ptl_pmc() {
         if enable {
-            set_software_fan_curve(cpu_curve.unwrap_or_else(|| crate::system::config::load_config().custom_profile.cpu_fan_curve))?;
+            let profile=crate::system::config::load_config().custom_profile;
+            if cpu_curve.is_none() && gpu_curve.is_none() {
+                set_rpm_fan_curves(profile.ptl_rpm_curves())?;
+            } else {
+                let cpu=cpu_curve.unwrap_or(profile.cpu_fan_curve).iter().map(|p| (p.temp,p.duty)).collect::<Vec<_>>();
+                let gpu=gpu_curve.unwrap_or(profile.gpu_fan_curve).iter().map(|p| (p.temp,p.duty)).collect::<Vec<_>>();
+                set_rpm_fan_curves(migrate_ptl_curves(&cpu,&gpu)?)?;
+            }
         } else { restore_fan_auto()?; }
         return Ok(enable);
     }

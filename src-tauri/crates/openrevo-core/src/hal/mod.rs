@@ -4,6 +4,8 @@
 pub mod declarative;
 pub mod cpu_temperature;
 pub mod ptl_pmc;
+pub mod fan_policy;
+pub mod fan_smoothing;
 pub mod driver_impl;
 pub mod mock;
 pub mod platform_probe;

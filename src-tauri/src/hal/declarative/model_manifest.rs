@@ -71,11 +71,15 @@ pub struct ModelCapabilities {
     #[serde(default = "default_true")]
     pub fan_ramp_rate: bool,
     #[serde(default)]
+    pub fan_software_smoothing: bool,
+    #[serde(default)]
     pub fan_control_mode: Option<String>,
     #[serde(default)]
     pub fan_boost_mode: Option<String>,
     #[serde(default)]
     pub max_fan_rpm: Option<u32>,
+    #[serde(default)]
+    pub min_fan_rpm: Option<[u16; 2]>,
     #[serde(default)]
     pub cpu_vendor: Option<String>,
     #[serde(default)]
@@ -316,6 +320,11 @@ mod tests {
         assert!(!manifest.matches_dmi("XINGYAO Series-P916F-LNL", "XINGYAO Series"));
         assert!(manifest.capabilities.battery_charge_limit);
         assert!(manifest.capabilities.fan_custom_curve);
+        assert!(manifest.capabilities.fan_independent_channels);
+        assert!(!manifest.capabilities.fan_ramp_rate);
+        assert!(manifest.capabilities.fan_software_smoothing);
+        assert_eq!(manifest.capabilities.min_fan_rpm, Some([1200, 1000]));
+        assert_eq!(manifest.capabilities.fan_control_mode.as_deref(), Some("pmc_rpm_curve"));
         assert!(manifest.uses_ptl_pmc());
         assert!(!manifest.capabilities.uses_bld_fan_controller());
         assert!(!manifest.uses_mifs_mailbox());

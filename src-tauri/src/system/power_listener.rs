@@ -71,6 +71,7 @@ fn handle_wake_auto_office() {
 }
 
 fn handle_system_resume_pipeline(event_name: &str) {
+    crate::hal::ptl_pmc::resume();
     crate::system::telemetry::set_screen_suspended(false);
     if crate::hal::platform_probe::is_ultrabook() {
         println!("[Power Guard] Ultrabook {}! Restoring power mode only.", event_name);
@@ -167,7 +168,7 @@ unsafe extern "system" fn power_wnd_proc(
         WM_POWERBROADCAST => {
             let pbt = wparam.0 as u32;
             if pbt == PBT_APMSUSPEND {
-                crate::hal::ptl_pmc::suspend_or_exit();
+                crate::hal::ptl_pmc::suspend();
                 // If Keep-Awake is active or screen was turned off for overnight tasks,
                 // NEVER degrade power mode to Office (1) and NEVER shut down water cooling!
                 let is_running_tasks = crate::system::switches::is_keep_awake() || crate::system::switches::is_screen_off();
@@ -231,7 +232,7 @@ unsafe extern "system" fn power_wnd_proc(
             LRESULT(1)
         }
         WM_QUERYENDSESSION | WM_ENDSESSION => {
-            crate::hal::ptl_pmc::suspend_or_exit();
+            crate::hal::ptl_pmc::shutdown();
             println!("[Power Guard] System is shutting down or restarting! Stopping water cooler & lighting...");
             crate::system::telemetry::set_screen_suspended(true);
             crate::system::display_tuning::reset_display_tuning_to_default();

@@ -1084,7 +1084,7 @@ export const CustomTuningPanel: React.FC<CustomTuningPanelProps> = ({
           />
 
           {/* Column 3: Fan Controls & Curves */}
-          {modelCaps?.fan_control_mode === 'pmc_pwm' ? (
+          {modelCaps?.fan_control_mode === 'pmc_rpm_curve' ? (
             <PtlFanControlPanel fan0={status.cpu_fan_rpm} fan1={status.gpu_fan_rpm} />
           ) : modelCaps?.fan_custom_curve === false ? (
             <BldFanStrategyPanel

@@ -268,6 +268,8 @@ pub struct FanCurvePoint {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CustomProfileConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ptl_rpm_fan_curves: Option<crate::hal::ptl_pmc::RpmFanCurves>,
     #[serde(default = "default_true")]
     pub cpu_temp_target_enabled: bool,
     #[serde(default = "default_cpu_temp")]
@@ -313,6 +315,7 @@ pub struct CustomProfileConfig {
 impl Default for CustomProfileConfig {
     fn default() -> Self {
         Self {
+            ptl_rpm_fan_curves: None,
             cpu_temp_target_enabled: true,
             cpu_temp_target: 95,
             cpu_pl1_watts: 75,
@@ -334,6 +337,58 @@ impl Default for CustomProfileConfig {
             gpu_fan_curve: default_fan_curve(),
             fan_curve_linked: false,
         }
+    }
+}
+
+impl CustomProfileConfig {
+    pub fn ptl_rpm_curves(&self) -> crate::hal::ptl_pmc::RpmFanCurves {
+        self.ptl_rpm_fan_curves.clone().unwrap_or_else(|| {
+            let cpu = self.cpu_fan_curve.iter().map(|p| (p.temp,p.duty)).collect::<Vec<_>>();
+            let gpu = self.gpu_fan_curve.iter().map(|p| (p.temp,p.duty)).collect::<Vec<_>>();
+            crate::hal::ptl_pmc::RpmFanCurves::from_legacy(&cpu,&gpu).unwrap_or_default()
+        })
+    }
+}
+
+#[cfg(test)]
+mod rpm_curve_tests {
+    use super::*;
+    #[test]
+    fn explicit_rpm_curves_survive_profile_serialization_without_changing_legacy_units() {
+        let mut profile=CustomProfileConfig::default();
+        let legacy=profile.cpu_fan_curve.clone();
+        let mut curves=crate::hal::ptl_pmc::RpmFanCurves::default();
+        curves.fan0[0].rpm=2000; curves.fan1=curves.fan0.clone();
+        profile.ptl_rpm_fan_curves=Some(curves.clone());
+        let saved=serde_json::to_string(&profile).unwrap();
+        let loaded:CustomProfileConfig=serde_json::from_str(&saved).unwrap();
+        assert_eq!(loaded.ptl_rpm_curves(),curves);
+        assert_eq!(loaded.cpu_fan_curve,legacy);
+        assert_eq!(loaded.ptl_rpm_fan_curves.unwrap().fan0[0].rpm,2000);
+    }
+    #[test]
+    fn rpm_smoothing_roundtrips_and_legacy_rpm_profiles_receive_defaults() {
+        let mut profile=CustomProfileConfig::default();
+        let mut curves=crate::hal::ptl_pmc::RpmFanCurves::default();
+        curves.smoothing=crate::hal::ptl_pmc::RpmSmoothing {enabled:false,rise_rpm_per_sec:2000,fall_rpm_per_sec:500,fall_delay_secs:5};
+        profile.ptl_rpm_fan_curves=Some(curves.clone());
+        let mut value=serde_json::to_value(&profile).unwrap();
+        let loaded:CustomProfileConfig=serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(loaded.ptl_rpm_curves().smoothing,curves.smoothing);
+        assert_eq!(loaded.fan_curve_enabled,profile.fan_curve_enabled);
+        value["ptl_rpm_fan_curves"].as_object_mut().unwrap().remove("smoothing");
+        let legacy:CustomProfileConfig=serde_json::from_value(value).unwrap();
+        assert_eq!(legacy.ptl_rpm_curves().smoothing,crate::hal::ptl_pmc::RpmSmoothing::default());
+        assert_eq!(legacy.cpu_fan_curve,profile.cpu_fan_curve);
+    }
+    #[test]
+    fn old_profiles_migrate_percent_knots_to_rpm_targets() {
+        let mut profile=CustomProfileConfig::default();
+        profile.cpu_fan_curve=vec![FanCurvePoint {temp:40,duty:25},FanCurvePoint {temp:50,duty:25},FanCurvePoint {temp:95,duty:100}];
+        profile.gpu_fan_curve=profile.cpu_fan_curve.clone();
+        assert_eq!(profile.ptl_rpm_curves().targets(45),[2200,2200]);
+        assert_eq!(profile.ptl_rpm_curves().targets(100),[7500,7500]);
+        assert!(profile.ptl_rpm_fan_curves.is_none());
     }
 }
 
@@ -843,6 +898,7 @@ pub fn get_default_builtin_presets() -> Vec<CustomProfilePreset> {
             icon_key: "flame".to_string(),
             is_builtin: true,
             profile: CustomProfileConfig {
+                ptl_rpm_fan_curves: None,
                 cpu_temp_target_enabled: true,
                 cpu_temp_target: 95,
                 cpu_pl1_watts: sb_pl1,
@@ -890,6 +946,7 @@ pub fn get_default_builtin_presets() -> Vec<CustomProfilePreset> {
             icon_key: "zap".to_string(),
             is_builtin: true,
             profile: CustomProfileConfig {
+                ptl_rpm_fan_curves: None,
                 cpu_temp_target_enabled: true,
                 cpu_temp_target: 95,
                 cpu_pl1_watts: bal_pl1,
@@ -919,6 +976,7 @@ pub fn get_default_builtin_presets() -> Vec<CustomProfilePreset> {
             icon_key: "leaf".to_string(),
             is_builtin: true,
             profile: CustomProfileConfig {
+                ptl_rpm_fan_curves: None,
                 cpu_temp_target_enabled: true,
                 cpu_temp_target: 85,
                 cpu_pl1_watts: off_pl1,
@@ -966,6 +1024,7 @@ pub fn get_default_builtin_presets() -> Vec<CustomProfilePreset> {
             icon_key: "rocket".to_string(),
             is_builtin: true,
             profile: CustomProfileConfig {
+                ptl_rpm_fan_curves: None,
                 cpu_temp_target_enabled: true,
                 cpu_temp_target: 95,
                 cpu_pl1_watts: tur_pl1,

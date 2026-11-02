@@ -538,6 +538,14 @@ impl MechrevoHardwareHAL for DeclarativeHardwareDriver {
 }
 
 impl HardwareDriver for DeclarativeHardwareDriver {
+    fn set_rpm_fan_curves(&self, curves: crate::hal::ptl_pmc::RpmFanCurves) -> Result<(), HalError> {
+        if !self.manifest.uses_ptl_pmc() { return Err(HalError::UnsupportedModel("No PM2 RPM curve channel declared".into())); }
+        crate::hal::ptl_pmc::set_rpm_curves(curves).map_err(HalError::RegisterAccessFailed)
+    }
+    fn set_rpm_fan_smoothing(&self, smoothing: crate::hal::ptl_pmc::RpmSmoothing) -> Result<(), HalError> {
+        if !self.manifest.uses_ptl_pmc() { return Err(HalError::UnsupportedModel("No PM2 software smoothing declared".into())); }
+        crate::hal::ptl_pmc::set_smoothing(smoothing).map_err(HalError::RegisterAccessFailed)
+    }
     fn set_manual_fan_rpm(&self, targets: [u16; 2]) -> Result<(), HalError> {
         if !self.manifest.uses_ptl_pmc() { return Err(HalError::UnsupportedModel("No PM2 fan channel declared".into())); }
         crate::hal::ptl_pmc::set_manual_rpm(targets).map_err(HalError::RegisterAccessFailed)

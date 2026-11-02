@@ -1160,6 +1160,7 @@ pub fn build_model_default_custom_profile(profile: &ModelProfile) -> crate::syst
     let super_perf = true;
 
     crate::system::config::CustomProfileConfig {
+        ptl_rpm_fan_curves: None,
         cpu_temp_target_enabled: true,
         cpu_temp_target: 95,
         cpu_pl1_watts: profile.pl1_default,

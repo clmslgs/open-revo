@@ -372,146 +372,91 @@ fn coherent_rpm(
     approximate.ok_or_else(|| "PTL fan RPM sample changed during read".into())
 }
 
-pub type Curve = Vec<(u8, u8)>;
+use super::fan_policy::{validate_targets, FanController, FanHardware, FanRpmGuard};
+pub use super::fan_policy::{FanControlStatus, RpmCurvePoint, RpmFanCurves, RpmSmoothing};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct BatteryState {
     pub enabled: bool,
     pub lower: u8,
     pub upper: u8,
 }
-pub fn validate_curve(curve: &[(u8, u8)]) -> Result<()> {
-    if !(2..=32).contains(&curve.len())
-        || curve.iter().any(|&(t, d)| t > 100 || d > 100)
-        || curve
-            .windows(2)
-            .any(|p| p[0].0 >= p[1].0 || p[0].1 > p[1].1)
-    {
-        return Err("曲线须有 2–32 个温度递增、占空比不下降的有效节点".into());
-    }
-    Ok(())
-}
-fn interpolate(curve: &[(u8, u8)], temp: u8) -> u8 {
-    for p in curve.windows(2) {
-        if temp <= p[0].0 {
-            return p[0].1;
-        }
-        if temp < p[1].0 {
-            let ratio = (temp - p[0].0) as f32 / (p[1].0 - p[0].0) as f32;
-            return (p[0].1 as f32 + ratio * (p[1].1 - p[0].1) as f32).round() as u8;
-        }
-    }
-    curve.last().unwrap().1
-}
-fn pwm_byte(percent: u8) -> u8 {
-    ((percent as u16 * 255 + 50) / 100) as u8
-}
 
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct FanControlStatus {
-    pub mode: String,
-    pub target_rpm: [u16; 2],
-    pub duty_percent: Option<u8>,
-    pub cpu_temperature: Option<u8>,
-    pub error: Option<String>,
-}
-#[derive(Clone)]
-enum Policy {
-    Auto,
-    RestorePending,
-    Manual([u16; 2]),
-    Curve(Curve),
-}
-struct Controller {
+struct NativeFans {
     pmc: Option<Pmc<PortDriver>>,
-    policy: Policy,
-    status: FanControlStatus,
+    rpm_guard: FanRpmGuard,
+    epoch: Instant,
 }
-impl Controller {
-    fn new() -> Self {
+impl Default for NativeFans {
+    fn default() -> Self {
         Self {
             pmc: None,
-            policy: Policy::Auto,
-            status: FanControlStatus {
-                mode: "auto".into(),
-                ..Default::default()
-            },
+            rpm_guard: FanRpmGuard::default(),
+            epoch: Instant::now(),
         }
-    }
-    fn connect(&mut self) -> Result<()> {
-        if self.pmc.is_some() {
-            return Ok(());
-        }
-        let manifest =
-            super::declarative::load_matched_manifest().ok_or("No matching PTL declaration")?;
-        if !manifest.uses_ptl_pmc() {
-            return Err("Current model does not declare PTL PM2 control".into());
-        }
-        let pmc = Pmc(PortDriver::open()?);
-        pmc.synchronize()?;
-        let mode = pmc.exchange(MODE_QUERY[0], MODE_QUERY[1], true)?;
-        if !(1..=3).contains(&mode) {
-            return Err("PTL PM2 firmware compatibility query failed".into());
-        }
-        self.pmc = Some(pmc);
-        Ok(())
-    }
-    fn automatic(&mut self) -> Result<()> {
-        // Cancel policy even if the restore fails; the heartbeat must never reassert stale targets.
-        self.policy = Policy::RestorePending;
-        self.status.mode = "recovering".into();
-        self.status.target_rpm = [0, 0];
-        self.status.duty_percent = None;
-        self.connect()?;
-        self.pmc.as_ref().unwrap().auto()?;
-        self.policy = Policy::Auto;
-        self.status.mode = "auto".into();
-        Ok(())
-    }
-    fn apply(&mut self, policy: Policy, temperature: u8) -> Result<()> {
-        if !(1..90).contains(&temperature) {
-            return Err("CPU 温度不可用或达到 90°C，已停止手动控制".into());
-        }
-        self.connect()?;
-        let pmc = self.pmc.as_ref().unwrap();
-        match &policy {
-            Policy::Auto | Policy::RestorePending => {
-                return self.automatic();
-            }
-            Policy::Manual(targets) => {
-                for (fan, rpm) in targets.iter().enumerate() {
-                    pmc.exchange(FAN_RPM[fan], ((rpm + 50) / 100) as u8, false)?;
-                }
-                self.status.mode = "manual".into();
-                self.status.target_rpm = targets.map(|rpm| ((rpm + 50) / 100) * 100);
-                self.status.duty_percent = None;
-            }
-            Policy::Curve(curve) => {
-                let duty = interpolate(curve, temperature).max(25);
-                pmc.exchange(FAN_PWM, pwm_byte(duty), false)?;
-                self.status.mode = "curve".into();
-                self.status.duty_percent = Some(duty);
-                self.status.target_rpm = [0, 0];
-            }
-        }
-        self.status.cpu_temperature = Some(temperature);
-        self.status.error = None;
-        self.policy = policy;
-        Ok(())
-    }
-    fn fail(&mut self, reason: String) {
-        let restore = self.automatic();
-        if restore.is_err() {
-            self.pmc = None;
-        }
-        self.status.error = Some(match restore {
-            Ok(()) => reason,
-            Err(e) => format!("{reason}; 恢复自动失败: {e}"),
-        });
     }
 }
+impl NativeFans {
+    fn connect(&mut self) -> Result<&Pmc<PortDriver>> {
+        if self.pmc.is_none() {
+            let manifest =
+                super::declarative::load_matched_manifest().ok_or("No matching PTL declaration")?;
+            if !manifest.uses_ptl_pmc() {
+                return Err("Current model does not declare PTL PM2 control".into());
+            }
+            let pmc = Pmc(PortDriver::open()?);
+            pmc.synchronize()?;
+            let mode = pmc.exchange(MODE_QUERY[0], MODE_QUERY[1], true)?;
+            if !(1..=3).contains(&mode) {
+                return Err("PTL PM2 firmware compatibility query failed".into());
+            }
+            self.pmc = Some(pmc);
+        }
+        Ok(self.pmc.as_ref().unwrap())
+    }
+    fn perform<T>(&mut self, action: impl FnOnce(&Pmc<PortDriver>) -> Result<T>) -> Result<T> {
+        let result = action(self.connect()?);
+        if result.is_err() {
+            self.pmc = None;
+        }
+        result
+    }
+}
+impl FanHardware for NativeFans {
+    fn read_rpm(&mut self) -> Result<[u16; 2]> {
+        self.perform(|pmc| Ok([pmc.rpm(0)?, pmc.rpm(1)?]))
+    }
+    fn automatic(&mut self) -> Result<()> {
+        self.rpm_guard.reset();
+        self.perform(Pmc::auto)
+    }
+    fn rpm(&mut self, targets: [u16; 2]) -> Result<[u16; 2]> {
+        let actual = self.perform(|pmc| Ok([pmc.rpm(0)?, pmc.rpm(1)?]))?;
+        let applied = self
+            .rpm_guard
+            .apply(targets, actual, self.epoch.elapsed())?;
+        self.perform(|pmc| {
+            for (fan, rpm) in applied.iter().enumerate() {
+                pmc.exchange(FAN_RPM[fan], ((rpm + 50) / 100) as u8, false)?;
+            }
+            Ok(())
+        })?;
+        Ok(applied)
+    }
+    fn probe(&mut self) -> Result<()> {
+        self.perform(|pmc| {
+            let mode = pmc.exchange(MODE_QUERY[0], MODE_QUERY[1], true)?;
+            if !(1..=3).contains(&mode) {
+                return Err("Invalid PTL PM2 recovery response".into());
+            }
+            Ok(())
+        })
+    }
+}
+type Controller = FanController<NativeFans>;
 static CONTROLLER: OnceLock<Mutex<Controller>> = OnceLock::new();
 fn controller() -> &'static Mutex<Controller> {
-    CONTROLLER.get_or_init(|| Mutex::new(Controller::new()))
+    CONTROLLER.get_or_init(|| Mutex::new(Controller::new(NativeFans::default())))
 }
 static HEARTBEAT: OnceLock<()> = OnceLock::new();
 fn start_heartbeat() {
@@ -520,113 +465,126 @@ fn start_heartbeat() {
             .name("ptl-fan-safety".into())
             .spawn(|| {
                 let mut sensor = PackageTemperatureReader::new();
+                let epoch = Instant::now();
                 let mut last = Instant::now();
                 loop {
-                    thread::sleep(Duration::from_millis(1000));
-                    let gap = last.elapsed();
+                    thread::sleep(Duration::from_secs(1));
+                    let gap_healthy = last.elapsed() <= Duration::from_secs(5);
                     last = Instant::now();
                     let mut c = controller().lock();
-                    if matches!(c.policy, Policy::Auto) {
+                    if !c.needs_tick() {
                         continue;
                     }
-                    let result = (|| {
-                        let _gate = gate::Gate::enter()?;
-                        if matches!(c.policy, Policy::RestorePending) {
-                            return c.automatic();
+                    match gate::Gate::enter() {
+                        Ok(_gate) => {
+                            let temp = sensor.read_celsius().and_then(|t| u8::try_from(t).ok());
+                            c.tick(temp, epoch.elapsed(), gap_healthy);
                         }
-                        if gap > Duration::from_secs(5) {
-                            return Err("系统恢复后已交回固件自动温控".into());
-                        }
-                        let temp = sensor
-                            .read_celsius()
-                            .and_then(|t| u8::try_from(t).ok())
-                            .ok_or("CPU 温度读取失败")?;
-                        let policy = c.policy.clone();
-                        c.apply(policy, temp)
-                    })();
-                    if let Err(error) = result {
-                        match gate::Gate::enter() {
-                            Ok(_gate) => c.fail(error),
-                            Err(e) => {
-                                c.policy = Policy::RestorePending;
-                                c.status.mode = "recovering".into();
-                                c.status.error = Some(format!("{error}; {e}"));
-                            }
-                        }
+                        Err(e) => c.note_failure(e),
                     }
                 }
             })
             .expect("Cannot start PTL fan safety worker");
     });
 }
-fn set_policy(policy: Policy) -> Result<()> {
+pub fn set_manual_rpm(targets: [u16; 2]) -> Result<()> {
+    validate_targets(targets)?;
     let temp = PackageTemperatureReader::new()
         .read_celsius()
-        .and_then(|t| u8::try_from(t).ok())
-        .ok_or("CPU 温度读取失败，无法启用手动风扇")?;
+        .and_then(|t| u8::try_from(t).ok());
     start_heartbeat();
     let mut c = controller().lock();
     let _gate = gate::Gate::enter()?;
-    if let Err(error) = c.apply(policy, temp) {
-        c.fail(error.clone());
-        return Err(error);
-    }
-    Ok(())
+    c.select_manual(targets, temp)
 }
-pub fn set_manual_rpm(targets: [u16; 2]) -> Result<()> {
-    if targets.iter().any(|rpm| !(2000..=7500).contains(rpm)) {
-        return Err("目标转速范围为 2000–7500 RPM".into());
+pub fn set_rpm_curves(curves: RpmFanCurves) -> Result<()> {
+    curves.validate()?;
+    let temp = PackageTemperatureReader::new()
+        .read_celsius()
+        .and_then(|t| u8::try_from(t).ok());
+    start_heartbeat();
+    let mut c = controller().lock();
+    match gate::Gate::enter() {
+        Ok(_gate) => c.select_curve(curves, temp),
+        Err(e) => {
+            c.queue_curve(curves)?;
+            c.note_failure(e);
+            Ok(())
+        }
     }
-    set_policy(Policy::Manual(targets))
 }
-pub fn set_curve(curve: Curve) -> Result<()> {
-    validate_curve(&curve)?;
-    set_policy(Policy::Curve(curve))
+pub fn set_smoothing(smoothing: RpmSmoothing) -> Result<()> {
+    controller().lock().set_smoothing(smoothing)
+}
+/// Compatibility input: old percentages become explicit RPM targets; no PWM curve remains active.
+pub fn set_curve(curve: Vec<(u8, u8)>) -> Result<()> {
+    let mut curves = RpmFanCurves::from_legacy(&curve, &curve)?;
+    curves.smoothing = status().smoothing;
+    set_rpm_curves(curves)
 }
 pub fn restore_auto() -> Result<()> {
+    start_heartbeat();
     let mut c = controller().lock();
-    c.policy = Policy::RestorePending;
-    c.status.mode = "recovering".into();
-    let _gate = gate::Gate::enter().inspect_err(|e| c.status.error = Some(e.clone()))?;
-    let result = c.automatic();
-    c.status.error = result.as_ref().err().cloned();
-    result
+    c.cancel();
+    match gate::Gate::enter() {
+        Ok(_gate) => c.automatic(),
+        Err(e) => {
+            c.note_failure(e.clone());
+            Err(e)
+        }
+    }
 }
-/// Does nothing until this process has actually opened the private channel.
-pub fn suspend_or_exit() {
+pub fn suspend() {
     if let Some(c) = CONTROLLER.get() {
         let mut c = c.lock();
-        if !matches!(c.policy, Policy::Auto) {
-            c.policy = Policy::RestorePending;
-            c.status.mode = "recovering".into();
-            match gate::Gate::enter() {
-                Ok(_gate) => {
-                    if let Err(e) = c.automatic() {
-                        c.fail(e);
-                    } else {
-                        c.status.error = None;
-                    }
-                }
-                Err(e) => c.status.error = Some(e),
+        if !c.needs_tick() {
+            return;
+        }
+        match gate::Gate::enter() {
+            Ok(_gate) => c.suspend(),
+            Err(e) => {
+                c.suspend_without_io();
+                c.note_failure(e);
             }
         }
     }
 }
+pub fn resume() {
+    if let Some(c) = CONTROLLER.get() {
+        c.lock().resume();
+    }
+}
+pub fn shutdown() {
+    if let Some(c) = CONTROLLER.get() {
+        let mut c = c.lock();
+        if !c.needs_tick() {
+            return;
+        }
+        c.cancel();
+        match gate::Gate::enter() {
+            Ok(_gate) => {
+                let _ = c.shutdown();
+            }
+            Err(e) => c.note_failure(e),
+        }
+    }
+}
+/// Kept for existing diagnostic callers. Shutdown cancels future resumption.
+pub fn suspend_or_exit() {
+    shutdown();
+}
 pub fn status() -> FanControlStatus {
-    controller().lock().status.clone()
+    controller().lock().status()
 }
 pub fn read_rpm() -> Result<[u16; 2]> {
     let mut c = controller().lock();
     let _gate = gate::Gate::enter()?;
-    c.connect()?;
-    let pmc = c.pmc.as_ref().unwrap();
-    Ok([pmc.rpm(0)?, pmc.rpm(1)?])
+    c.hardware.perform(|pmc| Ok([pmc.rpm(0)?, pmc.rpm(1)?]))
 }
 pub fn battery_state() -> Result<BatteryState> {
     let mut c = controller().lock();
     let _gate = gate::Gate::enter()?;
-    c.connect()?;
-    c.pmc.as_ref().unwrap().battery()
+    c.hardware.perform(Pmc::battery)
 }
 pub fn set_battery_limit(limit: u8) -> Result<()> {
     if ![60, 80, 100].contains(&limit) {
@@ -634,8 +592,7 @@ pub fn set_battery_limit(limit: u8) -> Result<()> {
     }
     let mut c = controller().lock();
     let _gate = gate::Gate::enter()?;
-    c.connect()?;
-    c.pmc.as_ref().unwrap().set_battery_limit(limit)
+    c.hardware.perform(|pmc| pmc.set_battery_limit(limit))
 }
 
 #[cfg(test)]
@@ -773,31 +730,6 @@ mod tests {
         io.0.borrow_mut().fail_command_once = true;
         assert!(Pmc(io.clone()).exchange(FAN_PWM, 128, false).is_err());
         assert_eq!(io.0.borrow().writes, [(STATUS_COMMAND, FAN_PWM)]);
-    }
-    #[test]
-    fn overheating_is_rejected_before_connecting_to_hardware() {
-        let mut c = Controller::new();
-        assert!(c.apply(Policy::Manual([4000, 4000]), 90).is_err());
-        assert!(c.pmc.is_none());
-        assert!(matches!(c.policy, Policy::Auto));
-    }
-    #[test]
-    fn pwm_uses_full_byte_range() {
-        assert_eq!(pwm_byte(25), 64);
-        assert_eq!(pwm_byte(50), 128);
-        assert_eq!(pwm_byte(75), 191);
-        assert_eq!(pwm_byte(100), 255);
-    }
-    #[test]
-    fn curves_validate_and_interpolate() {
-        let c = [(40, 25), (60, 50), (90, 100)];
-        validate_curve(&c).unwrap();
-        assert_eq!(interpolate(&c, 20), 25);
-        assert_eq!(interpolate(&c, 50), 38);
-        assert_eq!(interpolate(&c, 100), 100);
-        assert!(validate_curve(&[(40, 20), (40, 30)]).is_err());
-        assert!(validate_curve(&[(40, 40), (50, 30)]).is_err());
-        assert!(validate_curve(&[]).is_err());
     }
     #[test]
     fn tachometer_retries_torn_samples() {
