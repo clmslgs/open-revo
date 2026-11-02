@@ -18,6 +18,7 @@ export interface HardwareState {
   cpu_usage: number;         // %
   cpu_freq: number;          // MHz
   gpu_temp: number;          // °C
+  gpu_temp_unavailable_reason?: string | null;
   cpu_fan_rpm: number;       // RPM
   gpu_fan_rpm: number;       // RPM
   gpu_usage: number;         // %
@@ -46,6 +47,7 @@ export interface HardwareState {
   is_dc_online?: boolean;    // true if connected to round-socket DC adapter (required for Turbo & Custom)
   cpu_power_w?: number;      // CPU package real-time power (W)
   gpu_power_w?: number;      // GPU real-time power draw (W)
+  gpu_power_available?: boolean | null; // Distinguish valid zero watts from unavailable data
   gpu_tuning_caps?: GpuTuningCapabilities; // Multi-generation GPU tuning & DB/cTGP capabilities
 }
 

@@ -20,6 +20,7 @@ export interface ModelCapabilities {
   form_factor?: 'thin_light' | 'gaming' | 'mini_pc' | string;
   ui_preset?: string;
   discrete_gpu?: boolean;
+  gpu_telemetry_backend?: string | null;
   water_cooling?: boolean;
   fan_custom_curve?: boolean;
   fan_independent_channels?: boolean;

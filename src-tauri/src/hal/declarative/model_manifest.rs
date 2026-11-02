@@ -58,6 +58,9 @@ pub struct BiosVersionRange {
 pub struct ModelCapabilities {
     #[serde(default)]
     pub discrete_gpu: bool,
+    /// Independent of discrete-GPU controls; opts into read-only iGPU telemetry.
+    #[serde(default)]
+    pub gpu_telemetry_backend: Option<String>,
     #[serde(default)]
     pub gpu_mux_type: Option<String>,
     #[serde(default)]
@@ -329,6 +332,7 @@ mod tests {
         assert!(manifest.capabilities.fan_software_smoothing);
         assert_eq!(manifest.capabilities.cpu_power_backend.as_deref(), Some("intel_rapl"));
         assert_eq!(manifest.capabilities.cpu_power_max_watts, Some(50));
+        assert_eq!(manifest.capabilities.gpu_telemetry_backend.as_deref(), Some("intel_igcl_pmt"));
         assert!(manifest.capabilities.power_modes.iter().any(|mode| mode == "custom"));
         // Custom is implemented by the CPU backend, not an invented fourth WMI command.
         assert!(manifest.actions["set_power_mode"].for_mode("custom").is_none());

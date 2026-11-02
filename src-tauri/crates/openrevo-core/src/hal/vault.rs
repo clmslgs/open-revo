@@ -76,3 +76,17 @@ pub mod intel {
     pub const PL2_FIELDS: u64 = (POWER_VALUE_MASK << 32) | PL2_ENABLE;
     pub const OWNED_FIELDS: u64 = PL1_FIELDS | PL2_FIELDS;
 }
+
+/// Intel's read-only Windows PMT ABI and PTL normal telemetry layout.
+/// Source: intel/compute-runtime sysman_pmt_helper.h and Intel-PMT/xml/PTL/0.
+pub mod intel_pmt {
+    pub const INTERFACE_GUID: u128 = 0x3dfb2563_5c44_4c59_8d80_baea7d06e6b8;
+    pub const DISCOVERY_SIZE: u32 = (0x9998 << 16) | (1 << 14);
+    pub const DISCOVERY: u32 = DISCOVERY_SIZE | (1 << 2);
+    pub const READ_QWORD: u32 = DISCOVERY_SIZE | (3 << 2);
+    pub const DISCOVERY_HEADER_BYTES: usize = 8;
+    pub const DISCOVERY_ENTRY_BYTES: usize = 16;
+    pub const PTL_NORMAL_GUID: u32 = 0x03086000;
+    pub const PTL_TEMPERATURE_QWORD: u32 = 15;
+    pub const PTL_GT_MAX_SHIFT: u32 = 56;
+}

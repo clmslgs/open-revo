@@ -2,7 +2,7 @@
   "$schema": "https://openrevo.org/schemas/model-driver.v1.json",
   "id": "mechrevo_xingyao_14_p916f_ptl",
   "name": "MECHREVO Xingyao 14 P916F-PTL (Intel Panther Lake)",
-  "version": "1.4.1",
+  "version": "1.4.3",
   "author": "OpenRevo Core Team",
   "identity": {
     "form_factor": "thin_light",
@@ -16,6 +16,7 @@
   },
   "capabilities": {
     "discrete_gpu": false,
+    "gpu_telemetry_backend": "intel_igcl_pmt",
     "water_cooling": false,
     "fan_custom_curve": true,
     "fan_independent_channels": true,

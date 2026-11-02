@@ -5,6 +5,7 @@ pub mod declarative;
 pub use openrevo_core::hal::cpu_power;
 
 pub use openrevo_core::hal::cpu_temperature;
+pub use openrevo_core::hal::intel_gpu;
 pub use openrevo_core::hal::ptl_pmc;
 pub mod driver_impl;
 pub mod mock;

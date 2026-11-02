@@ -12,6 +12,7 @@ export interface CpuTuningSectionProps {
   gpuTemp?: number;
   gpuFanRpm?: number;
   gpuPowerW?: number;
+  gpuPowerAvailable?: boolean | null;
   gpuName?: string;
   discreteGpu?: boolean;
   minPl: number;
@@ -61,6 +62,7 @@ export const CpuTuningSection: React.FC<CpuTuningSectionProps> = ({
   gpuTemp,
   gpuFanRpm,
   gpuPowerW,
+  gpuPowerAvailable,
   discreteGpu,
   cpuVendor,
   cpuTuningType,
@@ -347,6 +349,7 @@ export const CpuTuningSection: React.FC<CpuTuningSectionProps> = ({
         gpuTemp={gpuTemp}
         gpuFanRpm={gpuFanRpm}
         gpuPowerW={gpuPowerW}
+        gpuPowerAvailable={gpuPowerAvailable}
         isApuOrIgpu={isApuOrIgpu}
       />
     </div>

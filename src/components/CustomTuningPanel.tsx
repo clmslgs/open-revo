@@ -1035,6 +1035,7 @@ export const CustomTuningPanel: React.FC<CustomTuningPanelProps> = ({
             gpuTemp={status.gpu_temp}
             gpuFanRpm={status.gpu_fan_rpm}
             gpuPowerW={status.gpu_power_w}
+            gpuPowerAvailable={status.gpu_power_available}
             gpuName={status.gpu_name}
             discreteGpu={modelCaps?.discrete_gpu}
             minPl={minPl}

@@ -54,6 +54,81 @@ These controls instead use the declared `pmc_ec` channel, protocol
 board, manufacturer and BIOS 1.00 independently of the JSON declaration.
 No Tongfang or Baolongda EC register map is used.
 
+## Integrated GPU telemetry (2026-11-03)
+
+Contract 1.4.3 declares `gpu_telemetry_backend: intel_igcl_pmt` independently of
+`discrete_gpu: false`. The dashboard previously zeroed every GPU reading on a
+machine without a discrete GPU, bypassing the integrated graphics entirely.
+The new read-only HAL loads the installed Intel runtime from its HKLM
+`ControlApiPath`, verifies that the selected adapter is Intel integrated
+graphics, and reads GPU clocks, available temperatures, and activity counters.
+When IGCL has no temperature, it reads the GPU sensor through the existing
+Intel PMT driver using Intel's published Panther Lake telemetry layout.
+It does not enable discrete-GPU tuning or launch `nvidia-smi`.
+
+Sampling follows the existing GPU telemetry demand flag. There is no periodic
+hardware poll when no consumer requests GPU data, and the driver context is
+released after ten seconds without requests. Samples are cached for one second;
+driver failures clear readings and retry after thirty seconds. Activity uses
+counter deltas, so the first sample has no utilization result. Unsupported
+values remain unavailable rather than being replaced with CPU/package values.
+
+Read-only validation on this machine, Intel Arc B390 with driver
+`32.0.101.8357`, returned a live GPU frequency of 900 MHz. IGCL enumerated zero
+temperature sensors and marked `gpuCurrentTemperature.bSupported` false.
+Windows `D3DKMTQueryAdapterInfo` also returned zero temperature and frequency.
+The PMT fallback successfully read a GPU temperature of 48 degrees Celsius.
+This is the separate graphics `GT_MAX` sensor, not a CPU/package substitute.
+The completed Rust probe then returned 56, 56 and 55 degrees Celsius in three
+consecutive samples, all at 900 MHz, with `temperature_source: intel_pmt_gt_max`.
+
+The installed PMT interface exposes two regions: GUID `0x03086100` (fixed,
+186 DWORDs) and GUID `0x03086000` (normal, 838 DWORDs). Only the latter is
+accepted. Intel's [PTL XML](https://github.com/intel/Intel-PMT/blob/main/xml/PTL/0/ptl_aggregator.xml)
+defines `Container_15.GT_MAX` at bits 56..63, signed S8.7.0 Celsius. The
+read-only Windows [PMT API](https://github.com/intel/compute-runtime/blob/master/level_zero/sysman/source/shared/windows/pmt/sysman_pmt_helper.h)
+uses a QWORD index of 15 for this container. Discovery version, GUID, region
+length and reply lengths are validated before accepting a temperature.
+Unknown layouts and unavailable sensors retain `--` with an explanatory tooltip.
+No new driver is installed and no physical-memory access is added.
+
+The [IGCL programming guide](https://intel.github.io/drivers.gpu.control-library/prog.html)
+documents that the runtime comes with the graphics driver and must not be bundled.
+
+To inspect the same data independently, run from the project root:
+
+```powershell
+cargo run --quiet --manifest-path .\src-tauri\Cargo.toml -p openrevo-core --example intel_gpu -- --samples 3
+```
+
+This prints one JSON object per sample, including `temperature_source` to
+distinguish `intel_igcl` from `intel_pmt_gt_max`. If neither source provides a
+valid sensor value, `temperature_c` is null. The probe does not change clocks,
+power limits, or fans.
+
+### Integrated GPU power
+
+Contract 1.4.3 also exposes `gpu_power_w` from IGCL's supported GPU energy
+counter. The [IGCL specification](https://intel.github.io/drivers.gpu.control-library/Control/api.html)
+defines average GPU power as the energy change in joules divided by the elapsed
+driver timestamp in seconds. Both support flags, units and numeric types are
+checked before using these counters. CPU package, system and total-card energy
+counters are not substituted for the GPU domain.
+
+The first sample establishes the baseline; the next telemetry update supplies
+watts. Missing counters, resets, nonfinite numbers and sampling gaps over ten
+seconds clear the reading until a new valid interval is available. A separate
+`gpu_power_available` flag distinguishes valid zero watts from unavailable data.
+The overview card and Custom telemetry row share this value. GPU readings below
+1 W retain two decimal places; unsupported legacy APU telemetry retains its
+existing shared-package label. The APU package total continues to show CPU
+package power, which already includes the GPU, without adding GPU watts again.
+
+A read-only four-sample probe returned null (baseline), 0.1224 W, 0.0984 W and
+0.0230 W under the current desktop workload. The supplied historical AIDA64
+screenshot separately reports `CPU GT Cores: 0.03 W`; it is not a simultaneous
+comparison. These samples are not used to derive a power limit or calibration.
+
 ## Native CPU custom power (2026-11-02)
 
 Contract 1.4.1 opts into the independent `cpu_power_backend: intel_rapl` and

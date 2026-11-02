@@ -18,9 +18,10 @@ function formatCpuShort(brand?: string): string {
 }
 
 function formatGpuShort(name?: string, isPureIgpu?: boolean): string {
-  if (!name || isPureIgpu) return isPureIgpu ? 'Core Graphics (iGPU)' : 'GPU';
+  if (!name) return isPureIgpu ? 'Core Graphics (iGPU)' : 'GPU';
   let s = name
     .replace(/NVIDIA\s+GeForce\s+/gi, '')
+    .replace(/\(R\)|\(TM\)/gi, '')
     .replace(/\s+Laptop\s+GPU/gi, '')
     .trim();
   return s || 'GPU';
@@ -139,7 +140,7 @@ export const HardwareStatCards: React.FC<HardwareStatCardsProps> = ({ status, ca
             {isPureIgpu ? 'GPU 集成核心' : 'GPU 独立显卡'}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <PowerWattBadge watts={status.gpu_power_w} type="gpu" isApuOrIgpu={isApuOrIgpu} />
+            <PowerWattBadge watts={status.gpu_power_w} available={status.gpu_power_available} type="gpu" isApuOrIgpu={isApuOrIgpu} />
             <Activity className={`w-4 h-4 ${isPureIgpu ? 'text-sky-400' : 'text-emerald-400'} flex-shrink-0`} />
           </div>
         </div>
@@ -147,7 +148,7 @@ export const HardwareStatCards: React.FC<HardwareStatCardsProps> = ({ status, ca
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '8px 0 3px 0' }}>
             <div style={{ display: 'flex', alignItems: 'baseline' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '24px', fontWeight: 800, color: status.gpu_temp > 80 ? '#f43f5e' : '#fff', lineHeight: 1 }}>
+              <span title={status.gpu_temp_unavailable_reason || undefined} style={{ fontFamily: 'var(--font-mono)', fontSize: '24px', fontWeight: 800, color: status.gpu_temp > 80 ? '#f43f5e' : '#fff', lineHeight: 1 }}>
                 {status.gpu_temp > 0 ? status.gpu_temp : '--'}
               </span>
               <span style={{ fontSize: '10.5px', color: 'var(--text-dim)', fontWeight: 500, marginLeft: '2px' }}>°C</span>
