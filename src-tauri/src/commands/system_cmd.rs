@@ -349,15 +349,15 @@ pub fn toggle_oem_service(
             if let Some(v) = crate::driver::wmi_ec::wmi_read_ec(crate::driver::wmi_ec::ADDR_AC_RECOVERY) {
                 let mut new_v = if cfg_clone.ac_recovery_enabled { v | crate::driver::wmi_ec::AC_RECOVERY_BITMASK } else { v & !crate::driver::wmi_ec::AC_RECOVERY_BITMASK };
                 if effective_mode == 4 {
-                    new_v |= crate::driver::wmi_ec::MASK_QKEY_WHITE_1830;
+                    new_v |= crate::driver::wmi_ec::MASK_QKEY_WHITE_AC_RECOVERY;
                 } else {
-                    new_v &= !crate::driver::wmi_ec::MASK_QKEY_WHITE_1830;
+                    new_v &= !crate::driver::wmi_ec::MASK_QKEY_WHITE_AC_RECOVERY;
                 }
                 crate::driver::wmi_ec::wmi_write_ec(crate::driver::wmi_ec::ADDR_AC_RECOVERY, new_v);
             }
             if effective_mode == 4 {
                 if let Some(v) = crate::driver::wmi_ec::wmi_read_ec(crate::driver::wmi_ec::ADDR_CAMERA_CUTOFF) {
-                    crate::driver::wmi_ec::wmi_write_ec(crate::driver::wmi_ec::ADDR_CAMERA_CUTOFF, v | crate::driver::wmi_ec::MASK_QKEY_WHITE_1831);
+                    crate::driver::wmi_ec::wmi_write_ec(crate::driver::wmi_ec::ADDR_CAMERA_CUTOFF, v | crate::driver::wmi_ec::MASK_QKEY_WHITE_CAMERA_CUTOFF);
                 }
             }
             if let Some(v) = crate::driver::wmi_ec::wmi_read_ec(crate::driver::wmi_ec::ADDR_TRIGGER_BYTE) {
@@ -812,6 +812,8 @@ pub struct CustomPluginItem {
     pub watchers: Option<Vec<crate::system::watcher_hub::WatcherDefinition>>,
     pub permissions: Option<Vec<String>>,
     pub min_host_version: Option<String>,
+    #[serde(default)]
+    pub order: Option<f64>,
     pub is_compatible: bool,
     pub compatibility_notice: Option<String>,
 }
@@ -846,6 +848,8 @@ pub struct RawPluginManifest {
     pub permissions: Option<Vec<String>>,
     #[serde(default, alias = "openrevo_version", alias = "min_version")]
     pub min_host_version: Option<String>,
+    #[serde(default)]
+    pub order: Option<f64>,
 }
 
 pub fn check_version_compatibility(min_host_version: Option<&str>) -> (bool, Option<String>) {
@@ -1238,6 +1242,7 @@ pub fn get_custom_plugins() -> Result<Vec<CustomPluginItem>, String> {
                                 watchers: manifest.watchers.clone(),
                                 permissions: manifest.permissions.clone(),
                                 min_host_version: manifest.min_host_version.clone(),
+                                order: manifest.order,
                                 is_compatible,
                                 compatibility_notice,
                             });
@@ -1275,6 +1280,7 @@ pub fn get_custom_plugins() -> Result<Vec<CustomPluginItem>, String> {
                     watchers: None,
                     permissions: None,
                     min_host_version: None,
+                    order: None,
                     is_compatible: true,
                     compatibility_notice: None,
                 });

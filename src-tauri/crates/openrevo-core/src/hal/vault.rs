@@ -34,6 +34,11 @@ pub mod ptl {
     pub const INPOUT_SHA256: &str = "f8965fdce668692c3785afa3559159f9a18287bc0d53abb21902895a8ecf221b";
 }
 
+pub mod display {
+    pub const IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS: u32 = 0x00230498;
+    pub const IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS: u32 = 0x0023049C;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
